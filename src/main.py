@@ -7,11 +7,7 @@ from dotenv import load_dotenv
 import csv
 
 from .core.user_stats import load_user_data, record_status_update, find_pending_request, get_users_without_submission_for_date
-<<<<<<< HEAD
 from .core.warnings import give_warning,user_has_leave_on_date,should_give_warning,user_has_leave_on_date
-=======
-from .core.warnings import give_warning
->>>>>>> af664e66cb7005f4df0a6e6477e48ef9f648decd
 from .core.channel_lookup import get_user_status_channel
 from .core.current_team_manager import CurrentTeamManager
 from .core.current_team_manager import CURRENT_TEAM_ROLE_NAME
@@ -440,7 +436,7 @@ async def check_daily_warnings():
         print(f"Checked {current_team_members_count} current-team members in {guild.name}")
         print(f"Total warnings given: {warning_count}")
 
-# 11:59 PM IST reminder for daily status updates
+# 11:00 PM IST reminder for daily status updates
 @tasks.loop(time=datetime.time(hour=8, minute=50, tzinfo=datetime.timezone.utc))  # 11:59 PM IST
 async def daily_reminder():
     """
@@ -522,11 +518,7 @@ async def daily_reminder():
                 reminder_text = f"**11 PM Reminder:** {', '.join(mention_list)}"
                 if remaining_count > 0:
                     reminder_text += f" and {remaining_count} others"
-<<<<<<< HEAD
                 reminder_text += " - Submit your daily status update! Deadline is 11:59 PM."
-=======
-                reminder_text += " - Please submit your daily status update! Deadline is 11:59 PM."
->>>>>>> af664e66cb7005f4df0a6e6477e48ef9f648decd
                 
                 try:
                     await channel.send(reminder_text)
