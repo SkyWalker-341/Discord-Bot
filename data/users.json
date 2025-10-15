@@ -1,0 +1,72 @@
+{
+    "1206295721616347197": {
+        "username": "Skywalker-341",
+        "submissions": {
+            "c772b4e4-4303-4517-b205-0f7f339cc7b9": {
+                "date": "25-09-2025",
+                "hours": 10.0,
+                "description": "bwfbnflkwnkl",
+                "blockers": "None",
+                "is_wfh": false,
+                "is_late": false,
+                "timestamp": "2025-09-25T10:30:01.177578"
+            },
+            "2ac669e9-cbe5-4369-a1a9-ae11c5486498": {
+                "date": "28-09-2025",
+                "hours": 7.0,
+                "description": "home in the work in box",
+                "blockers": "None",
+                "is_wfh": false,
+                "is_late": false,
+                "timestamp": "2025-09-28T18:31:04.099953"
+            },
+            "c9704e54-27c5-4478-b659-15c7346f31de": {
+                "date": "06-10-2025",
+                "hours": 8.0,
+                "description": "home",
+                "blockers": "blknfna",
+                "is_wfh": false,
+                "is_late": false,
+                "timestamp": "2025-10-06T20:52:35.098369"
+            },
+            "2feea207-d99b-4b29-b56e-6d69f7ebc342": {
+                "date": "10-10-2025",
+                "hours": 4.0,
+                "description": "ghowjfm",
+                "blockers": "None",
+                "is_wfh": false,
+                "is_late": false,
+                "timestamp": "2025-10-10T20:24:15.684222"
+            },
+            "58b64517-c95a-4424-8a72-f02d9997c6a3": {
+                "date": "15-10-2025",
+                "hours": 9.0,
+                "description": "hijem",
+                "blockers": "None",
+                "is_wfh": false,
+                "is_late": false,
+                "timestamp": "2025-10-15T22:57:37.363767"
+            }
+        },
+        "total_hours": 38.0,
+        "total_submissions": 5,
+        "late_submissions": 0
+    },
+    "666925625650446357": {
+        "username": "s4bot3ur",
+        "submissions": {
+            "9fbda4c4-b723-4564-8b25-1719550f5075": {
+                "date": "25-08-2025",
+                "hours": 6.0,
+                "description": "Onnum illa",
+                "blockers": "Illa",
+                "is_wfh": false,
+                "is_late": true,
+                "timestamp": "2025-09-25T11:31:23.693771"
+            }
+        },
+        "total_hours": 6.0,
+        "total_submissions": 1,
+        "late_submissions": 1
+    }
+}

@@ -1,0 +1,136 @@
+[
+    {
+        "request_id": "82e7d54a-b138-470a-bf4d-cfc73984ac8e",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "15-10-2025",
+            "end": "25-10-2025"
+        },
+        "reason": "fsasag",
+        "status": "approved",
+        "created_at": "2025-09-25T10:30:38.142279",
+        "approver_id": 666925625650446357,
+        "updated_at": "2025-09-25T11:21:53.790767"
+    },
+    {
+        "request_id": "0f5cef30-cc5b-47a6-8153-51f502e25f59",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "10-10-2025",
+            "end": "25-10-2025"
+        },
+        "reason": "noisfninfknlk",
+        "status": "approved",
+        "created_at": "2025-09-25T11:28:47.061112",
+        "approver_id": 666925625650446357,
+        "updated_at": "2025-09-25T11:29:13.766141"
+    },
+    {
+        "request_id": "2c01d41f-5dde-4b0b-8086-648852a11eee",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "20-10-2025",
+            "end": "30-10-2025"
+        },
+        "reason": "sfshome",
+        "status": "approved",
+        "created_at": "2025-09-25T11:31:56.384472",
+        "approver_id": 666925625650446357,
+        "updated_at": "2025-09-25T11:32:25.190181"
+    },
+    {
+        "request_id": "1864ad39-241f-43f0-b5bc-922af9c26882",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "25-09-2025",
+            "end": "30-10-2025"
+        },
+        "reason": "hoiwjm",
+        "status": "auto-approved",
+        "created_at": "2025-09-25T11:34:57.542032"
+    },
+    {
+        "request_id": "47e3c8ea-87ae-4332-84ba-63979ccebf9a",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "25-09-2025",
+            "end": "10-10-2025"
+        },
+        "reason": "hiome",
+        "status": "auto-approved",
+        "created_at": "2025-09-25T11:48:04.137335"
+    },
+    {
+        "request_id": "35295c08-f914-47e5-a9af-64fbefa56ea9",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "30-09-2025",
+            "end": "20-10-2025"
+        },
+        "reason": "home",
+        "status": "approved",
+        "created_at": "2025-09-25T11:48:45.186650",
+        "approver_id": 855321243153465397,
+        "updated_at": "2025-09-25T11:51:36.675034"
+    },
+    {
+        "request_id": "742e511b-ab0a-4651-b14a-5f515a2411b0",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "30-10-2025",
+            "end": "10-11-2025"
+        },
+        "reason": "home",
+        "status": "approved",
+        "created_at": "2025-09-25T12:14:43.289625",
+        "approver_id": 855321243153465397,
+        "updated_at": "2025-09-25T12:15:14.486835"
+    },
+    {
+        "request_id": "b7c91251-0302-40a5-9dcb-ae7540c6ebb3",
+        "type": "special",
+        "member_id": 1265982536211890280,
+        "dates": {
+            "start": "01-10-2025",
+            "end": "05-10-2025"
+        },
+        "reason": "exams",
+        "status": "approved",
+        "created_at": "2025-09-28T18:36:32.376671",
+        "approver_id": 1206295721616347197,
+        "updated_at": "2025-09-28T18:41:31.261183"
+    },
+    {
+        "request_id": "8b765df2-ec92-4e15-b2a7-20156840e837",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "16-10-2025",
+            "end": "18-10-2025"
+        },
+        "reason": "howpmw",
+        "status": "approved",
+        "created_at": "2025-10-15T18:50:12.802635",
+        "approver_id": 1206295721616347197,
+        "updated_at": "2025-10-15T18:52:10.888929"
+    },
+    {
+        "request_id": "2cffe0ea-04de-448c-b12b-b43fb9a6f6aa",
+        "type": "special",
+        "member_id": 1206295721616347197,
+        "dates": {
+            "start": "15-10-2025",
+            "end": "20-10-2025"
+        },
+        "reason": "sgsafga",
+        "status": "auto-approved",
+        "created_at": "2025-10-15T22:59:50.412492"
+    }
+]
