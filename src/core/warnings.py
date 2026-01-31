@@ -4,9 +4,15 @@ import json
 import os
 from ..core.utils import has_current_team_role
 
-
-WARNINGS_FILE = "data/warnings.json"
-WARNING_CHANNEL_ID = 1416744851457704158
+# Import from config instead of hardcoding
+from ..config import (
+    WARNING_CHANNEL_ID,
+    WARNINGS_FILE,
+    FIRST_PROBATION_ROLE_NAME,
+    SECOND_PROBATION_ROLE_NAME,
+    FIRST_PROBATION_WARNING_COUNT,
+    SECOND_PROBATION_WARNING_COUNT
+)
 
 def load_warnings():
     if not os.path.exists(WARNINGS_FILE):
@@ -70,9 +76,9 @@ def user_has_leave_on_date(user_id, date):
                 continue
     
     # Check casual leave history
-    casual_file = os.path.join("data", "casual_leave.json")
-    if os.path.exists(casual_file):
-        with open(casual_file, "r") as f:
+    from ..config import CASUAL_LEAVE_FILE
+    if os.path.exists(CASUAL_LEAVE_FILE):
+        with open(CASUAL_LEAVE_FILE, "r") as f:
             casual_data = json.load(f)
         
         user_id_str = str(user_id)
@@ -89,10 +95,11 @@ def user_has_leave_on_date(user_id, date):
     
     return False
 
-"""Determine if a member should receive warnings for a given date."""
-
 async def should_give_warning(member: discord.Member, date):
-    
+    """
+    Determine if a member should receive a warning.
+    Returns the number of warnings to give (0, 1, or 2).
+    """
     # 1. Skip bots
     if member.bot:
         return 0
@@ -120,21 +127,25 @@ async def should_give_warning(member: discord.Member, date):
     submissions = get_user_submissions_for_date(member.id, date)
     has_submission = len(submissions) > 0
     
+    # Determine warning count
     if has_leave:
-        # User has leave - no warnings at all
         return 0
     
     if has_submission:
-        # User submitted status - no warnings
         return 0
     
-    # User gets 2 warnings (1 for missing status, 1 for missing leave/no valid reason)
+    # If no leave AND no submission: 2 warnings
     return 2
 
-"""Give a warning to a member and handle probation escalation."""
-
 async def give_warning(bot, member: discord.Member, warning_count: int = 1):
-
+    """
+    Assign warning(s) to a member with proper escalation.
+    
+    Args:
+        bot: Discord bot instance
+        member: Member to warn
+        warning_count: Number of warnings to give (default 1, can be 2)
+    """
     warnings = load_warnings()
     now = datetime.datetime.now()
     month_key = f"{member.id}-{now.strftime('%Y-%m')}"
@@ -152,7 +163,6 @@ async def give_warning(bot, member: discord.Member, warning_count: int = 1):
     save_warnings(warnings)
 
     # Post warning message in channel
-
     channel = bot.get_channel(WARNING_CHANNEL_ID)
     if channel:
         if warning_count == 2:
@@ -163,56 +173,62 @@ async def give_warning(bot, member: discord.Member, warning_count: int = 1):
             )
         else:
             await channel.send(
-                f"⚠️ {member.mention} warning: {new_count}"
+                f"{member.mention} warning: {new_count}"
             )
 
-    # Probation escalation with correct logic
-
+    # Probation escalation with configurable thresholds
     guild = member.guild
-    role_1st = discord.utils.get(guild.roles, name="1st Probation")
-    role_2nd = discord.utils.get(guild.roles, name="2nd Probation")
+    # Use role names from config
+    role_1st = discord.utils.get(guild.roles, name=FIRST_PROBATION_ROLE_NAME)
+    role_2nd = discord.utils.get(guild.roles, name=SECOND_PROBATION_ROLE_NAME)
 
     # Check if roles exist
     if not role_1st:
-        print(" Warning: '1st Probation' role not found in server")
+        print(f"Warning: '{FIRST_PROBATION_ROLE_NAME}' role not found in server")
     if not role_2nd:
-        print(" Warning: '2nd Probation' role not found in server")
-    
-    # First probation: When user reaches 3 warnings
-    if old_count < 3 <= new_count and role_1st:
-        # Only add if they don't already have it
+        print(f"Warning: '{SECOND_PROBATION_ROLE_NAME}' role not found in server")
+
+    # Use warning counts from config
+    # First probation: When user reaches configured count (default: 3)
+    if old_count < FIRST_PROBATION_WARNING_COUNT <= new_count and role_1st:
         if role_1st not in member.roles:
             try:
                 await member.add_roles(role_1st)
                 if channel:
-                    await channel.send(f"📋 {member.mention} has been placed on **1st Probation** (3 warnings).")
-                print(f"Added 1st Probation role to {member.display_name}")
+                    await channel.send(
+                        f"{member.mention} has been placed on **{FIRST_PROBATION_ROLE_NAME}** "
+                        f"({FIRST_PROBATION_WARNING_COUNT} warnings)."
+                    )
+                print(f"Added {FIRST_PROBATION_ROLE_NAME} role to {member.display_name}")
             except discord.Forbidden:
-                print(f"Bot lacks permission to add 1st Probation role to {member.display_name}")
+                print(f"Bot lacks permission to add {FIRST_PROBATION_ROLE_NAME} role to {member.display_name}")
             except Exception as e:
-                print(f"Error adding 1st Probation role: {e}")
+                print(f"Error adding {FIRST_PROBATION_ROLE_NAME} role: {e}")
 
-    # Second probation: When user reaches 4+ warnings
-    elif new_count >= 4 and role_2nd:
+    # Second probation: When user reaches configured count (default: 4)
+    elif new_count >= SECOND_PROBATION_WARNING_COUNT and role_2nd:
         # Remove 1st probation if they have it
         if role_1st and role_1st in member.roles:
             try:
                 await member.remove_roles(role_1st)
-                print(f"Removed 1st Probation from {member.display_name}")
+                print(f"Removed {FIRST_PROBATION_ROLE_NAME} from {member.display_name}")
             except Exception as e:
-                print(f"Error removing 1st Probation: {e}")
+                print(f"Error removing {FIRST_PROBATION_ROLE_NAME}: {e}")
         
         # Add 2nd probation if they don't have it
         if role_2nd not in member.roles:
             try:
                 await member.add_roles(role_2nd)
                 if channel:
-                    await channel.send(f"🚨 {member.mention} has been escalated to **2nd Probation** ({new_count} warnings).")
-                print(f" Added 2nd Probation role to {member.display_name}")
+                    await channel.send(
+                        f"{member.mention} has been escalated to **{SECOND_PROBATION_ROLE_NAME}** "
+                        f"({new_count} warnings)."
+                    )
+                print(f"Added {SECOND_PROBATION_ROLE_NAME} role to {member.display_name}")
             except discord.Forbidden:
-                print(f"Bot lacks permission to add 2nd Probation role to {member.display_name}")
+                print(f"Bot lacks permission to add {SECOND_PROBATION_ROLE_NAME} role to {member.display_name}")
             except Exception as e:
-                print(f"Error adding 2nd Probation role: {e}")
+                print(f"Error adding {SECOND_PROBATION_ROLE_NAME} role: {e}")
 
 def get_user_warning_count(user_id, month=None, year=None):
     """Get warning count for a user in a specific month/year."""

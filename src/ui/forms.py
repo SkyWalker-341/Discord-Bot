@@ -7,25 +7,27 @@ import re
 import csv
 from ..core.user_stats import record_status_update, load_pending_requests, save_pending_requests, load_user_data, save_user_data,get_user_submissions_for_date
 from ..core.channel_lookup import get_user_status_channel
+from dateutil.relativedelta import relativedelta
 from ..ui.buttons import LeaveApprovalView
-
-
-# =====================
-# Helper Functions
-# =====================
-
-CASUAL_HISTORY_FILE = os.path.join("data", "casual_leave.json")
-CSV_EXPORT_FILE = os.path.join("data", "activity_report.csv")
+from ..config import (
+    LEAVE_TRACKING_CHANNEL_ID,
+    LEAVE_REQUEST_CHANNEL_ID,
+    CASUAL_LEAVE_FILE,
+    CSV_EXPORT_FILE,
+    MAX_CASUAL_LEAVE_DAYS,
+    MAX_SPECIAL_LEAVE_DAYS,
+    LATE_SUBMISSION_MONTHS_LIMIT
+)
 
 def load_casual_leave_history():
-    if not os.path.exists(CASUAL_HISTORY_FILE):
+    if not os.path.exists(CASUAL_LEAVE_FILE):
         return {}
-    with open(CASUAL_HISTORY_FILE, "r") as f:
+    with open(CASUAL_LEAVE_FILE, "r") as f:
         return json.load(f)
 
 def save_casual_leave_history(data):
-    os.makedirs(os.path.dirname(CASUAL_HISTORY_FILE), exist_ok=True)
-    with open(CASUAL_HISTORY_FILE, "w") as f:
+    os.makedirs(os.path.dirname(CASUAL_LEAVE_FILE), exist_ok=True)
+    with open(CASUAL_LEAVE_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
 def has_unlimited_casual_leave(user_roles):
@@ -266,12 +268,15 @@ async def handle_auto_approval(interaction: discord.Interaction, request_data: d
     # Ensure pending_requests is a list
     if not isinstance(pending_requests, list):
         pending_requests = []
-    
+
+    if "username" not in request_data:
+        request_data["username"] = interaction.user.display_name
+
     pending_requests.append(request_data)
     save_pending_requests(pending_requests)
 
-    leave_tracking_channel_id = 1415019014224089147
-    leave_tracking_channel = interaction.client.get_channel(leave_tracking_channel_id)
+    #leave_tracking_channel_id = 1139635542640840814
+    leave_tracking_channel = interaction.client.get_channel(LEAVE_TRACKING_CHANNEL_ID)
     bot_mention = interaction.client.user.mention
     if leave_tracking_channel:
         auto_approved_message = f"""```Leave on ({date_range_str})
@@ -308,6 +313,7 @@ def validate_date_format(date_str):
 def validate_status_date(date_str):
     """Validate date for status updates - allows past dates, not future dates."""
     date_obj = validate_date_format(date_str)
+    today = datetime.date.today()
     
     if date_obj > datetime.date.today():
         raise ValueError("Date cannot be in the future.")
@@ -360,7 +366,7 @@ def validate_hours(hours_str, is_wfh=False, is_weekend=False):
     if hours > 15:
         raise ValueError("Hours cannot exceed 15 in a single day.")
 
-    # Calculate minimum required hours
+    # Calculate minimum required hours (for warning message, not blocking)
     if is_weekend:
         min_hours = 6 if not is_wfh else 3
         day_type = "weekend"
@@ -368,11 +374,8 @@ def validate_hours(hours_str, is_wfh=False, is_weekend=False):
         min_hours = 4 if not is_wfh else 2
         day_type = "weekday"
     
-    if hours < min_hours:
-        wfh_note = " (WFH)" if is_wfh else ""
-        raise ValueError(f"Minimum {min_hours} hours required for {day_type}{wfh_note}. You submitted {hours} hours.")
-    
-    return hours
+    # Return hours with minimum info for warning (don't block submission)
+    return hours, min_hours, day_type
 
 def validate_work_description(description):
     """Enhanced work description validation."""
@@ -410,7 +413,7 @@ def validate_user_roles(user_roles):
             year_role = role_name
     
     if not team_role:
-        raise ValueError("You must have a team role (RedTeam, Android, BlockChain, Mobile) to use this bot.")
+        raise ValueError("You must have a team role (RedTeam, Android, BlockChain) to use this bot.")
     
     if not year_role:
         raise ValueError("You must have a year role (Trainee Member, 1st_years, 2nd_years, 3rd_years, 4th_years) to use this bot.")
@@ -502,7 +505,7 @@ class StatusForm(discord.ui.Modal, title="Daily Status Update"):
                 return
             
             # 6. Validate hours with enhanced validation
-            hours_worked = validate_hours(self.hours_input.value, is_wfh, is_weekend)
+            hours_worked, min_hours, day_type = validate_hours(self.hours_input.value, is_wfh, is_weekend)
             
             # 7. Check weekly target (32 hours)
             current_weekly, total_weekly = check_weekly_target(interaction.user.id, submission_date, hours_worked)
@@ -549,20 +552,36 @@ class StatusForm(discord.ui.Modal, title="Daily Status Update"):
         late_indicator = " (Late Submission)" if is_late else ""
         weekly_progress = f"\nWeekly Progress: {total_weekly:.1f}/32 hours"
         
-        status_message = f"""```Namah Shivaya ({submission_date.strftime('%d-%m-%Y')}){late_indicator}
-{work_desc}
-work from hostel: {'YES' if is_wfh else 'NO'}
-Blockers: {blockers_text}
-Time Spent: {hours_worked} hrs```By {interaction.user.mention}."""
+        # Sanitize work_desc and blockers_text to prevent code block breakout
+        safe_work_desc = work_desc.replace('`', '')
+        safe_blockers = blockers_text.replace('`', '')
+        
+        status_message = f"""
+```Namah Shivaya ({submission_date.strftime('%d-%m-%Y')}){late_indicator}
+{safe_work_desc}
 
-        # 13. Weekly target notification
-        weekly_note = ""
+Work from hostel: {'YES' if is_wfh else 'NO'}
+Blockers: {safe_blockers}
+Time Spent: {hours_worked} hrs```By {interaction.user.mention}
+"""
+
+        # 13. Build success message with minimum hours reminder
+        success_msg = "Your status update has been accepted and will be posted publicly."
+        
+        # Add minimum hours reminder
+        wfh_note = " (WFH)" if is_wfh else ""
+        if hours_worked < min_hours:
+            success_msg += f" Note: Minimum {min_hours} hours for {day_type}{wfh_note} is recommended."
+        else:
+            success_msg += f" Reminder: Weekdays require minimum 4 hours, weekends require minimum 6 hours."
+        
+        # Add weekly target notification
         if total_weekly >= 32:
-            weekly_note = " Target achieved!"
+            success_msg += " Target achieved!"
         elif total_weekly > 25:
-            weekly_note = f" Warning: {32 - total_weekly:.1f} hours remaining this week."
+            success_msg += f" Warning: {32 - total_weekly:.1f} hours remaining this week."
 
-        await interaction.response.send_message(f"Your status has been accepted and will be posted publicly.{weekly_note}", ephemeral=True)
+        await interaction.response.send_message(success_msg, ephemeral=True)
         await target_channel.send(status_message)
 
         # 14. Export updated CSV
@@ -631,13 +650,15 @@ class CasualLeaveModal(discord.ui.Modal, title="Casual Leave Request"):
 
         # 7. Post to leave-tracking channel
         bot_mention = interaction.client.user.mention
-        leave_tracking_channel = interaction.client.get_channel(1415019014224089147)
+        leave_tracking_channel = interaction.client.get_channel(1139635542640840814)
         if leave_tracking_channel:
             await leave_tracking_channel.send(
-                f"""```Leave on ({self.date_range.value})
+                f"""
+```Leave on ({self.date_range.value})
 Leave Type: Casual leave
 Reason: {reason}```
-from {interaction.user.mention} Approved by {bot_mention}"""
+from {interaction.user.mention} Approved by {bot_mention}
+"""
             )
 
         await interaction.followup.send(
@@ -746,10 +767,12 @@ class MedicalLeaveModal(discord.ui.Modal, title="Medical Leave Request"):
         leave_embed.add_field(name="Date Range", value=self.date_range.value, inline=False)
         leave_embed.add_field(name="Status", value="Pending", inline=False)
 
-        leave_request_channel_id = 1416718401044349038
-        leave_request_channel = interaction.client.get_channel(leave_request_channel_id)
+        #leave_request_channel_id = 1427641928907882587
+        leave_request_channel = interaction.client.get_channel(LEAVE_REQUEST_CHANNEL_ID)
         if leave_request_channel:
             await leave_request_channel.send(f"A new leave request is waiting!", embed=leave_embed, view=LeaveApprovalView(request_id=request_id))
+        else:
+            print(f"leave request channel {LEAVE_REQUEST_CHANNEL_ID} not found")
 
         await interaction.followup.send("Your medical leave request has been submitted for review.", ephemeral=True)
 
@@ -836,8 +859,8 @@ class SpecialLeaveModal(discord.ui.Modal, title="Special Leave Request"):
         leave_embed.add_field(name="Date Range", value=self.date_range.value, inline=False)
         leave_embed.add_field(name="Status", value="Pending", inline=False)
 
-        leave_request_channel_id = 1416718401044349038
-        leave_request_channel = interaction.client.get_channel(leave_request_channel_id)
+       # leave_request_channel_id = 1427641928907882587
+        leave_request_channel = interaction.client.get_channel(LEAVE_REQUEST_CHANNEL_ID)
         if leave_request_channel:
             await leave_request_channel.send(embed=leave_embed, view=LeaveApprovalView(request_id=request_id))
 

@@ -1,5 +1,6 @@
 import discord
 from ..core.user_stats import find_pending_request, update_pending_request
+from ..config import LEAVE_TRACKING_CHANNEL_ID
 
 ROLE_HIERARCHY = {
     "Trainee Member": 1,
@@ -68,7 +69,7 @@ class LeaveApprovalView(discord.ui.View):
         if current_status != "pending":
             # Get who processed it
             approver_id = request_data.get("approver_id")
-            status_emoji = "✅" if current_status == "approved" else "❌"
+            status_emoji = "[Approved]" if current_status == "approved" else "[Denied]"
             
             if approver_id:
                 try:
@@ -92,7 +93,7 @@ class LeaveApprovalView(discord.ui.View):
         # 1. Users cannot approve their own requests
         if interaction.user.id == requester_id:
             await interaction.response.send_message(
-                "❌ You cannot approve or deny your own leave request.",
+                "You cannot approve or deny your own leave request.",
                 ephemeral=True
             )
             return False
@@ -102,7 +103,7 @@ class LeaveApprovalView(discord.ui.View):
             requester = await interaction.guild.fetch_member(requester_id)
         except discord.NotFound:
             await interaction.response.send_message(
-                "❌ Could not find the user who requested this leave.",
+                "Could not find the user who requested this leave.",
                 ephemeral=True
             )
             return False
@@ -110,7 +111,7 @@ class LeaveApprovalView(discord.ui.View):
         # 3. Check hierarchy permissions
         if not can_approve_request(interaction.user.roles, requester.roles):
             await interaction.response.send_message(
-                "❌ Insufficient permissions. You can only approve/deny requests from members with lower hierarchy than you.",
+                "Insufficient permissions. You can only approve/deny requests from members with lower hierarchy than you.",
                 ephemeral=True
             )
             return False
@@ -129,20 +130,20 @@ class LeaveApprovalView(discord.ui.View):
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.green, custom_id="leave_approve_btn")
     async def approve_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ✅ STEP 1: Check request state FIRST (before any other checks)
+        # STEP 1: Check request state FIRST (before any other checks)
         request_data = await self._check_request_state(interaction)
         if not request_data:
             return  # Already handled with error message
 
-        # ✅ STEP 2: Check permissions
+        # STEP 2: Check permissions
         if not await self._check_permissions(interaction, request_data["member_id"]):
             return
 
-        # ✅ STEP 3: Update request status atomically
+        # STEP 3: Update request status atomically
         updated_request = update_pending_request(self.request_id, "approved", interaction.user.id)
         if not updated_request:
             await interaction.response.send_message(
-                "⚠️ Failed to update request. It may have been modified by another user.",
+                "Failed to update request. It may have been modified by another user.",
                 ephemeral=True
             )
             return
@@ -152,7 +153,7 @@ class LeaveApprovalView(discord.ui.View):
         try:
             requester = await interaction.guild.fetch_member(request_data["member_id"])
         except discord.NotFound:
-            await interaction.response.send_message("❌ Could not find the requester.", ephemeral=True)
+            await interaction.response.send_message("Could not find the requester.", ephemeral=True)
             return
 
         # Extract request details
@@ -170,7 +171,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
 
         # Update embed
         original_embed = interaction.message.embeds[0]
-        original_embed.title = "✅ Leave Request - Approved"
+        original_embed.title = "Leave Request - Approved"
         original_embed.color = discord.Color.green()
         original_embed.set_footer(text=f"Approved by {approver.display_name} ({get_role_display_name(approver.roles)})")
 
@@ -179,10 +180,12 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
         await interaction.response.edit_message(embed=original_embed, view=self)
 
         # Post to tracking channel
-        leave_tracking_channel_id = 1415019014224089147
-        leave_tracking_channel = interaction.client.get_channel(leave_tracking_channel_id)
+        #leave_tracking_channel_id = 1139635542640840814
+        leave_tracking_channel = interaction.client.get_channel(LEAVE_TRACKING_CHANNEL_ID)
         if leave_tracking_channel:
             await leave_tracking_channel.send(leave_tracking_message)
+        else:
+            print(f"Leave tracking channel {LEAVE_TRACKING_CHANNEL_ID} not found")
 
         # Close thread if in one
         if isinstance(interaction.channel, discord.Thread):
@@ -190,20 +193,20 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
 
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.red, custom_id="leave_deny_btn")
     async def deny_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ✅ STEP 1: Check request state FIRST
+        # STEP 1: Check request state FIRST
         request_data = await self._check_request_state(interaction)
         if not request_data:
             return
 
-        # ✅ STEP 2: Check permissions
+        # STEP 2: Check permissions
         if not await self._check_permissions(interaction, request_data["member_id"]):
             return
 
-        # ✅ STEP 3: Update request status atomically
+        # STEP 3: Update request status atomically
         updated_request = update_pending_request(self.request_id, "denied", interaction.user.id)
         if not updated_request:
             await interaction.response.send_message(
-                "⚠️ Failed to update request. It may have been modified by another user.",
+                "Failed to update request. It may have been modified by another user.",
                 ephemeral=True
             )
             return
@@ -213,7 +216,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
         try:
             requester = await interaction.guild.fetch_member(request_data["member_id"])
         except discord.NotFound:
-            await interaction.response.send_message("❌ Could not find the requester.", ephemeral=True)
+            await interaction.response.send_message("Could not find the requester.", ephemeral=True)
             return
 
         # Extract request details
@@ -231,7 +234,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
 
         # Update embed
         original_embed = interaction.message.embeds[0]
-        original_embed.title = "❌ Leave Request - Denied"
+        original_embed.title = "Leave Request - Denied"
         original_embed.color = discord.Color.red()
         original_embed.set_footer(text=f"Denied by {approver.display_name} ({get_role_display_name(approver.roles)})")
 
@@ -240,7 +243,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
         await interaction.response.edit_message(embed=original_embed, view=self)
 
         # Post to tracking channel
-        leave_tracking_channel_id = 1415019014224089147
+        #leave_tracking_channel_id = 1139635542640840814
         leave_tracking_channel = interaction.client.get_channel(leave_tracking_channel_id)
         if leave_tracking_channel:
             await leave_tracking_channel.send(leave_tracking_message)
@@ -259,7 +262,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
         try:
             requester = await interaction.guild.fetch_member(request_data["member_id"])
         except discord.NotFound:
-            await interaction.response.send_message("❌ Could not find the requester.", ephemeral=True)
+            await interaction.response.send_message("Could not find the requester.", ephemeral=True)
             return
 
         # Create thread
@@ -288,7 +291,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
             )
 
         await thread.send(f"Hey {requester.mention}, {interaction.user.mention} started this discussion thread.")
-        await interaction.response.send_message("✅ Thread created with approval buttons.", ephemeral=True)
+        await interaction.response.send_message("Thread created with approval buttons.", ephemeral=True)
 
 
 # Helper function to check if user has sufficient level for auto-approval

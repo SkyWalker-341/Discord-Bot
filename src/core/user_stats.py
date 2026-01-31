@@ -3,7 +3,6 @@ import os
 import datetime 
 import uuid
 
-
 DATA_FILE = os.path.join("data", "users.json")
 PENDING_FILE = os.path.join("data", "pending.json")
 
