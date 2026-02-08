@@ -1,4 +1,3 @@
-from asyncio import tasks
 import os
 import datetime
 import discord
@@ -23,14 +22,14 @@ from .config import (
 )
 
 from .core.user_stats import load_user_data, record_status_update, find_pending_request, get_users_without_submission_for_date
-from .core.warnings import give_warning,user_has_leave_on_date,should_give_warning
+from .core.warnings import give_warning,user_has_leave_on_date,should_give_warning,get_user_warning_count,load_warnings
 from .core.channel_lookup import get_user_status_channel
 from .core.current_team_manager import CurrentTeamManager
 from .core.current_team_manager import CURRENT_TEAM_ROLE_NAME
-from .core.user_stats import count_user_statistics_for_range,get_user_submissions_for_date
+from .core.user_stats import count_user_statistics_for_range,get_user_submissions_for_date,get_weekly_stats,get_monthly_stats
 from .core.utils import has_current_team_role
 from .ui.buttons import LeaveApprovalView
-from .ui.forms import StatusForm, CasualLeaveModal, MedicalLeaveModal, SpecialLeaveModal, export_to_csv,validate_user_roles
+from .ui.forms import StatusForm, CasualLeaveModal, MedicalLeaveModal, SpecialLeaveModal, export_to_csv,validate_user_roles,get_casual_leave_usage
 
 load_dotenv()
 
@@ -82,6 +81,7 @@ async def on_ready():
     #print_config()
     
     bot.add_view(LeaveApprovalView(request_id="dummy"))
+    bot.add_view(SupportView())
     print('Bot is ready to receive commands.')
     try:
         synced = await bot.tree.sync()
@@ -439,6 +439,141 @@ async def refresh_current_team_cache(interaction: discord.Interaction):
     count = current_team_manager.get_current_team_count(interaction.guild)
     
     await interaction.followup.send(f"Current-team cache refreshed. Found {count} active members.", ephemeral=True)
+
+@bot.tree.command(name="my_stats", description="View your weekly hours, warnings, and leave balance.")
+async def my_stats(interaction: discord.Interaction):
+    if not current_team_manager.is_current_team_member(interaction.user):
+        await interaction.response.send_message(
+            "Access denied. This command is only available to current-team members.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    today = datetime.date.today()
+    now = datetime.datetime.now()
+
+    # Weekly stats
+    days_since_monday = today.weekday()
+    current_week_monday = today - datetime.timedelta(days=days_since_monday)
+    weekly = get_weekly_stats(interaction.user.id, current_week_monday)
+
+    # Monthly stats
+    monthly = get_monthly_stats(interaction.user.id, today.month, today.year)
+
+    # Warnings this month
+    warning_count = get_user_warning_count(interaction.user.id, today.month, today.year)
+
+    # Casual leave balance
+    used_leaves, allowed_leaves = get_casual_leave_usage(
+        interaction.user.id, today.month, today.year, interaction.user.roles
+    )
+    if allowed_leaves == float("inf"):
+        leave_text = f"{used_leaves} used (unlimited)"
+    else:
+        remaining_leaves = max(0, allowed_leaves - used_leaves)
+        leave_text = f"{used_leaves}/{int(allowed_leaves)} used ({remaining_leaves} remaining)"
+
+    # Build embed
+    color = discord.Color.green() if weekly["target_met"] else discord.Color.orange()
+    embed = discord.Embed(
+        title=f"My Stats — {interaction.user.display_name}",
+        color=color,
+        timestamp=now
+    )
+
+    # Weekly field
+    remaining_hours = weekly.get("remaining_hours", max(0, 32.0 - weekly["total_hours"]))
+    weekly_text = (
+        f"**Hours:** {weekly['total_hours']:.1f}/32\n"
+        f"**Submissions:** {weekly['submissions_count']}\n"
+        f"**Remaining:** {remaining_hours:.1f} hours\n"
+        f"**Target Met:** {'Yes' if weekly['target_met'] else 'No'}"
+    )
+    embed.add_field(name="This Week", value=weekly_text, inline=True)
+
+    # Monthly field
+    monthly_text = (
+        f"**Hours:** {monthly['total_hours']:.1f}\n"
+        f"**Submissions:** {monthly['total_submissions']}\n"
+        f"**Late Submissions:** {monthly['late_submissions']}\n"
+        f"**Days Worked:** {monthly['days_worked']}"
+    )
+    embed.add_field(name=f"This Month ({today.strftime('%B')})", value=monthly_text, inline=True)
+
+    # Warnings + Leave field
+    extra_text = (
+        f"**Warnings:** {warning_count}\n"
+        f"**Casual Leave:** {leave_text}"
+    )
+    embed.add_field(name="Warnings & Leave", value=extra_text, inline=False)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="warning_report", description="View warning summary for all current-team members.")
+@commands.has_permissions(administrator=True)
+async def warning_report(interaction: discord.Interaction, month: int = None, year: int = None):
+    await interaction.response.defer(ephemeral=True)
+
+    today = datetime.date.today()
+    target_month = month if month and 1 <= month <= 12 else today.month
+    target_year = year if year and year >= 2020 else today.year
+
+    warnings_data = load_warnings()
+    current_team_members = current_team_manager.get_current_team_members(interaction.guild)
+
+    # Build a lookup: user_id -> display_name
+    member_names = {member.id: member.display_name for member in current_team_members}
+
+    # Collect warnings for the target month
+    target_key_suffix = f"-{target_year}-{target_month:02d}"
+    warned_members = []
+
+    for key, value in warnings_data.items():
+        if key.endswith(target_key_suffix):
+            user_id_str = key.replace(target_key_suffix, "")
+            try:
+                user_id = int(user_id_str)
+            except ValueError:
+                continue
+
+            count = value.get("count", value) if isinstance(value, dict) else value
+            if count > 0:
+                name = member_names.get(user_id, value.get("username", "Unknown") if isinstance(value, dict) else "Unknown")
+                warned_members.append({"name": name, "count": count})
+
+    warned_members.sort(key=lambda x: x["count"], reverse=True)
+
+    # Build embed
+    month_name = datetime.date(target_year, target_month, 1).strftime("%B %Y")
+    embed = discord.Embed(
+        title=f"Warning Report — {month_name}",
+        color=discord.Color.red() if warned_members else discord.Color.green(),
+        timestamp=datetime.datetime.now()
+    )
+
+    if warned_members:
+        total_warnings = sum(m["count"] for m in warned_members)
+
+        table_text = "```\n"
+        table_text += f"{'#':<4} {'Name':<25} {'Warnings':<8}\n"
+        table_text += f"{'-'*37}\n"
+        for i, m in enumerate(warned_members, start=1):
+            table_text += f"{i:<4} {m['name'][:23]:<25} {m['count']:<8}\n"
+        table_text += "```"
+
+        summary = (
+            f"**Members Warned:** {len(warned_members)}\n"
+            f"**Total Warnings:** {total_warnings}"
+        )
+        embed.add_field(name="Summary", value=summary, inline=False)
+        embed.add_field(name="Breakdown", value=table_text, inline=False)
+    else:
+        embed.add_field(name="Summary", value="No warnings issued this month.", inline=False)
+
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 # Use configured times from config
 @tasks.loop(time=datetime.time(hour=WARNING_CHECK_HOUR, minute=WARNING_CHECK_MINUTE, tzinfo=datetime.timezone.utc))

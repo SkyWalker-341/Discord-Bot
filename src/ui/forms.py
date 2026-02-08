@@ -434,6 +434,7 @@ class StatusForm(discord.ui.Modal, title="Daily Status Update"):
             placeholder="e.g., 04-09-2025",
             required=True,
             max_length=10,
+            default=datetime.date.today().strftime("%d-%m-%Y"),
             custom_id="date_input"
         )
         self.add_item(self.date_input)

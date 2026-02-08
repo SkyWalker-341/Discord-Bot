@@ -244,7 +244,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
 
         # Post to tracking channel
         #leave_tracking_channel_id = 1139635542640840814
-        leave_tracking_channel = interaction.client.get_channel(leave_tracking_channel_id)
+        leave_tracking_channel = interaction.client.get_channel(LEAVE_TRACKING_CHANNEL_ID)
         if leave_tracking_channel:
             await leave_tracking_channel.send(leave_tracking_message)
 
