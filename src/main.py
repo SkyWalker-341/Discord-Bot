@@ -29,7 +29,7 @@ from .core.current_team_manager import CURRENT_TEAM_ROLE_NAME
 from .core.user_stats import count_user_statistics_for_range,get_user_submissions_for_date,get_weekly_stats,get_monthly_stats
 from .core.utils import has_current_team_role
 from .ui.buttons import LeaveApprovalView
-from .ui.forms import StatusForm, CasualLeaveModal, MedicalLeaveModal, SpecialLeaveModal, export_to_csv,validate_user_roles,get_casual_leave_usage
+from .ui.forms import StatusForm, CasualLeaveModal, MedicalLeaveModal, SpecialLeaveModal, export_to_csv,validate_user_roles,get_casual_leave_usage,worK_from_hostel
 
 load_dotenv()
 
@@ -146,7 +146,9 @@ class LeaveTypeView(discord.ui.View):
         options=[
             discord.SelectOption(label="Casual Leave", value="casual"),
             discord.SelectOption(label="Medical Leave", value="medical"),
-            discord.SelectOption(label="Special Leave", value="special")
+            discord.SelectOption(label="Special Leave", value="special"),
+            discord.SelectOption(label="Work from Hostel", value="hostel")
+
         ],
         custom_id="leave_type_select"
     )
@@ -166,6 +168,8 @@ class LeaveTypeView(discord.ui.View):
             modal = MedicalLeaveModal()
         elif selected_type == "special":
             modal = SpecialLeaveModal()
+        elif selected_type == "hostel":
+            modal = worK_from_hostel()
         else:
             await interaction.response.send_message("Invalid leave type selected.", ephemeral=True)
             return
