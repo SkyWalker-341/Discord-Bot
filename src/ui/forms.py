@@ -778,6 +778,8 @@ class MedicalLeaveModal(discord.ui.Modal, title="Medical Leave Request"):
         await interaction.followup.send("Your medical leave request has been submitted for review.", ephemeral=True)
 
 
+
+
 ### SpecialLeaveModal  ###
 
 class SpecialLeaveModal(discord.ui.Modal, title="Special Leave Request"):
@@ -866,3 +868,98 @@ class SpecialLeaveModal(discord.ui.Modal, title="Special Leave Request"):
             await leave_request_channel.send(embed=leave_embed, view=LeaveApprovalView(request_id=request_id))
 
         await interaction.followup.send("Your special leave request has been submitted for review.", ephemeral=True)
+
+# work from hostel modal for extended periods (more than 3 days) - requires approval from core members
+
+class worK_from_hostel(discord.ui.Modal, title="Hostel Work Leave Request"):
+    """Leave form for working from hostel for extended periods."""
+    
+    def __init__(self):
+        super().__init__(title="Hostel Work Leave Request")
+        
+        # AUTO-FILL TODAY'S DATE
+        today_str = datetime.date.today().strftime("%d-%m-%Y")
+        default_range = f"{today_str} to {today_str}"
+        
+        self.date_range = discord.ui.TextInput(
+            label="Date Range (DD-MM-YYYY to DD-MM-YYYY)",
+            placeholder="e.g., 14-09-2025 to 18-09-2025",
+            default=default_range,
+            required=True,
+            custom_id="hostel_work_date_range"
+        )
+        self.add_item(self.date_range)
+        
+        self.reason = discord.ui.TextInput(
+            label="Reason for Hostel Work",
+            style=discord.TextStyle.paragraph,
+            placeholder="e.g., Personal work, family situation, etc.",
+            required=True,
+            custom_id="hostel_work_reason"
+        )
+        self.add_item(self.reason)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            validate_user_roles(interaction.user.roles)
+            start_date, end_date, start_date_str, end_date_str = validate_leave_date_range(self.date_range.value)
+            
+            reason = self.reason.value.strip()
+            if not reason:
+                await interaction.followup.send("Hostel work leave reason is required.", ephemeral=True)
+                return
+            if len(reason) > 500:
+                await interaction.followup.send("Reason cannot exceed 500 characters.", ephemeral=True)
+                return
+        
+        except ValueError as e:
+            await interaction.followup.send(f"Validation Error: {str(e)}", ephemeral=True)
+            return
+        
+        request_id = str(uuid.uuid4())
+        request_data = {
+            "request_id": request_id,
+            "type": "hostel_work",
+            "member_id": interaction.user.id,
+            "username": interaction.user.display_name,
+            "dates": {"start": start_date_str, "end": end_date_str},
+            "reason": reason,
+            "status": "pending",
+            "created_at": datetime.datetime.now().isoformat()
+        }
+        
+        if is_core_member(interaction.user.roles):
+            request_data["status"] = "auto-approved"
+            return await handle_auto_approval(interaction, request_data, self.date_range.value)
+        
+        pending_requests = load_pending_requests()
+        if not isinstance(pending_requests, list):
+            pending_requests = []
+        
+        pending_requests.append(request_data)
+        save_pending_requests(pending_requests)
+        
+        leave_embed = discord.Embed(
+            title="New Hostel Work Leave Request",
+            color=discord.Color.orange(),
+            description=f"**Submitted by:** {interaction.user.mention}\n**Reason:** {reason}"
+        )
+        leave_embed.add_field(name="Date Range", value=self.date_range.value, inline=False)
+        leave_embed.add_field(name="Status", value="Pending", inline=False)
+        
+        leave_request_channel = interaction.client.get_channel(LEAVE_REQUEST_CHANNEL_ID)
+        if leave_request_channel:
+            await leave_request_channel.send(
+                "A new hostel work leave request is waiting!",
+                embed=leave_embed,
+                view=LeaveApprovalView(request_id=request_id)
+            )
+        else:
+            print(f"Leave request channel {LEAVE_REQUEST_CHANNEL_ID} not found")
+        
+        await interaction.followup.send(
+            "Your hostel work leave request has been submitted for review.",
+            ephemeral=True
+        )
