@@ -1,0 +1,11 @@
+.env
+data/
+data.zip
+__pycache__/
+*.pyc
+*.csv
+*.json
+*.log
+.DS_Store
+.vscode/
+*.pem
