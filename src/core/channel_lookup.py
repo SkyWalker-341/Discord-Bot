@@ -15,7 +15,7 @@ YEAR_CHANNEL_PREFIX_MAP = {
     "1st_years": "1st",
     "2nd_years": "2nd",
     "3rd_years": "3rd",
-    "4nd_years": "4th"  
+    "4th_years": "4th"
 }
 
 async def get_user_status_channel(guild: discord.Guild, user_roles: list[discord.Role]) -> Optional[discord.TextChannel]:

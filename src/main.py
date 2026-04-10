@@ -1,6 +1,7 @@
 import os
 import datetime
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 import csv
@@ -21,22 +22,42 @@ from .config import (
     print_config
 )
 
-from .core.user_stats import load_user_data, record_status_update, find_pending_request, get_users_without_submission_for_date
-from .core.warnings import give_warning,user_has_leave_on_date,should_give_warning,get_user_warning_count,load_warnings
+from .core.storage import guild_reports_dir, maybe_seed_guild_data
+from .core.user_stats import (
+    get_submission_user_ids_for_date,
+    load_pending_requests,
+    load_user_data,
+)
+from .core.warnings import (
+    give_manual_warning,
+    give_warning as record_warning,
+    get_leave_user_ids_for_date,
+    should_give_warning,
+    get_user_warning_count,
+    load_warnings,
+)
 from .core.channel_lookup import get_user_status_channel
 from .core.current_team_manager import CurrentTeamManager
 from .core.current_team_manager import CURRENT_TEAM_ROLE_NAME
-from .core.user_stats import count_user_statistics_for_range,get_user_submissions_for_date,get_weekly_stats,get_monthly_stats
-from .core.utils import has_current_team_role
+from .core.team_summary import generate_team_summary_report, parse_summary_date
+from .core.user_stats import count_user_statistics_for_range, get_weekly_stats, get_monthly_stats
 from .ui.buttons import LeaveApprovalView
-from .ui.forms import StatusForm, CasualLeaveModal, MedicalLeaveModal, SpecialLeaveModal, export_to_csv,validate_user_roles,get_casual_leave_usage,worK_from_hostel
+from .ui.secure_forms import (
+    StatusForm,
+    CasualLeaveModal,
+    MedicalLeaveModal,
+    SpecialLeaveModal,
+    export_to_csv,
+    validate_user_roles,
+    get_casual_leave_usage,
+    worK_from_hostel,
+)
 
 load_dotenv()
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
-intents.message_content = True
 intents.members = True  
 
 # Use COMMAND_PREFIX from config
@@ -44,6 +65,68 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 
 # Initialize the current team manager
 current_team_manager = CurrentTeamManager()
+
+
+def owner_only():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        app_info = await interaction.client.application_info()
+        if app_info.owner and interaction.user.id == app_info.owner.id:
+            return True
+        if app_info.team and any(member.id == interaction.user.id for member in app_info.team.members):
+            return True
+        raise app_commands.CheckFailure("Only the bot owner can use this command.")
+
+    return app_commands.check(predicate)
+
+
+def format_manual_warning_response(
+    target_mention: str,
+    giver_mention: str,
+    warning_count: int,
+    reason: str | None = None,
+) -> str:
+    warning_word = "warning" if warning_count == 1 else "warnings"
+    message = f"{target_mention} received {warning_count} {warning_word} by {giver_mention}"
+    normalized_reason = " ".join((reason or "").split()).strip()
+    if normalized_reason:
+        safe_reason = discord.utils.escape_mentions(discord.utils.escape_markdown(normalized_reason))
+        message += f"\nReason: {safe_reason}"
+    return message
+
+
+def resolve_summary_date_range(
+    week_offset: int,
+    start_date: str | None,
+    end_date: str | None,
+) -> tuple[datetime.date, datetime.date]:
+    if start_date and end_date:
+        parsed_start = parse_summary_date(start_date)
+        parsed_end = parse_summary_date(end_date)
+        if parsed_start > parsed_end:
+            raise ValueError("start_date cannot be after end_date.")
+        return parsed_start, parsed_end
+
+    if start_date or end_date:
+        raise ValueError("Both start_date and end_date are required when one is provided.")
+
+    today = datetime.date.today()
+    current_week_monday = today - datetime.timedelta(days=today.weekday())
+    target_week_monday = current_week_monday - datetime.timedelta(weeks=week_offset)
+    target_week_sunday = target_week_monday + datetime.timedelta(days=6)
+    return target_week_monday, target_week_sunday
+
+
+def get_daily_activity_sets(guild_id: int, target_date: datetime.date) -> tuple[set[int], set[int]]:
+    user_data = load_user_data(guild_id)
+    pending_requests = load_pending_requests(guild_id)
+    submission_user_ids = get_submission_user_ids_for_date(guild_id, target_date, data=user_data)
+    leave_user_ids = get_leave_user_ids_for_date(
+        guild_id,
+        target_date,
+        pending_requests=pending_requests,
+    )
+    return submission_user_ids, leave_user_ids
+
 
 def generate_csv_file(file_path, report_data, from_date, to_date):
     """Generate CSV file from report data."""
@@ -69,6 +152,60 @@ def generate_csv_file(file_path, report_data, from_date, to_date):
                 "To Date": to_date.strftime("%d-%m-%Y")
             })
 
+
+SUMMARY_REPORT_TEAM_CHOICES = [
+    app_commands.Choice(name="Red Team", value="red"),
+    app_commands.Choice(name="Android Team", value="android"),
+    app_commands.Choice(name="Blockchain Team", value="blockchain"),
+    app_commands.Choice(name="Mobile Team", value="mobile"),
+]
+
+
+async def send_summary_report(
+    interaction: discord.Interaction,
+    team: str,
+    week_offset: int = 0,
+    start_date: str = None,
+    end_date: str = None,
+):
+    try:
+        summary_start_date, summary_end_date = resolve_summary_date_range(
+            week_offset=week_offset,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ValueError as exc:
+        await interaction.response.send_message(str(exc), ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=False)
+
+    try:
+        current_team_members = current_team_manager.get_current_team_members(interaction.guild)
+        report = await generate_team_summary_report(
+            guild_id=interaction.guild.id,
+            members=current_team_members,
+            team_name=team,
+            start_date=summary_start_date,
+            end_date=summary_end_date,
+        )
+    except ValueError as exc:
+        await interaction.followup.send(str(exc), ephemeral=True)
+        return
+    except RuntimeError as exc:
+        await interaction.followup.send(f"Could not generate the summary: {exc}", ephemeral=True)
+        return
+    except Exception as exc:
+        await interaction.followup.send(f"Unexpected error while generating the summary: {exc}", ephemeral=True)
+        return
+
+    with open(report["file_path"], "rb") as summary_file:
+        await interaction.followup.send(
+            content="✅ Team summary report generated successfully.",
+            file=discord.File(summary_file, filename=report["filename"]),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
@@ -78,9 +215,16 @@ async def on_ready():
         print("Bot configuration is incomplete. Please check your .env file.")
         print("Bot will continue but some features may not work correctly.")
     
-    #print_config()
-    
-    bot.add_view(LeaveApprovalView(request_id="dummy"))
+    allow_legacy_seed = len(bot.guilds) == 1
+    for guild in bot.guilds:
+        seeded_files = maybe_seed_guild_data(guild.id, allow_legacy_seed=allow_legacy_seed)
+        if seeded_files:
+            print(f"Seeded guild data for {guild.name}: {', '.join(seeded_files)}")
+
+        for request in load_pending_requests(guild.id):
+            if request.get("status") == "pending" and request.get("request_id"):
+                bot.add_view(LeaveApprovalView(request_id=request["request_id"]))
+
     bot.add_view(SupportView())
     print('Bot is ready to receive commands.')
     try:
@@ -90,8 +234,26 @@ async def on_ready():
         print(f'Error syncing commands: {e}')
 
     print(f"Heppo is online")
-    check_daily_warnings.start()
-    daily_reminder.start()
+    if not check_daily_warnings.is_running():
+        check_daily_warnings.start()
+    if not daily_reminder.is_running():
+        daily_reminder.start()
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        message = "You need administrator permissions to use this command."
+    elif isinstance(error, app_commands.CheckFailure):
+        message = "You do not have permission to use this command."
+    else:
+        print(f"App command error: {error}")
+        message = "An unexpected error occurred while processing that command."
+
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+    else:
+        await interaction.response.send_message(message, ephemeral=True)
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
@@ -203,12 +365,19 @@ class SupportView(discord.ui.View):
         await interaction.response.send_message("Please select the type of leave:", view=LeaveTypeView(), ephemeral=True)
 
 @bot.tree.command(name="setup_support_channel", description="Sets up the main support message with buttons.")
-@commands.is_owner()
+@app_commands.guild_only()
+@owner_only()
 async def setup_support_channel(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     try:
-        channel = await bot.fetch_channel(SUPPORT_CHANNEL_ID)
+        channel = interaction.guild.get_channel(SUPPORT_CHANNEL_ID)
+        if channel is None:
+            await interaction.followup.send(
+                f"Could not find channel with ID {SUPPORT_CHANNEL_ID} in this server. Please check your configuration.",
+                ephemeral=True,
+            )
+            return
         
         embed = discord.Embed(
             title="Work & Leave Tracker",
@@ -219,24 +388,20 @@ async def setup_support_channel(interaction: discord.Interaction):
         
         await interaction.followup.send(f"Support channel message has been set up in <#{SUPPORT_CHANNEL_ID}>!", ephemeral=True)
     
-    except discord.errors.NotFound:
-        await interaction.followup.send(
-            f"Could not find channel with ID {SUPPORT_CHANNEL_ID}. Please check your .env file.",
-            ephemeral=True
-        )
-    
     except Exception as e:
         await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
 
 @bot.tree.command(name="export_full_report", description="Export complete activity report (CSV only).")
-@commands.has_permissions(administrator=True)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def export_full_report_command(
     interaction: discord.Interaction,
     from_date: str = None,
     to_date: str = None
 ):
     """Exports activity report in CSV format only."""
-    await interaction.response.defer(ephemeral=False)
+    await interaction.response.defer(ephemeral=True)
     
     try:
         # Parse dates
@@ -254,7 +419,7 @@ async def export_full_report_command(
             parsed_to_date = datetime.date.today()
         
         # Get data
-        data = load_user_data()
+        data = load_user_data(interaction.guild.id)
         current_team_members = current_team_manager.get_current_team_members(interaction.guild)
         
         # Prepare data
@@ -266,7 +431,7 @@ async def export_full_report_command(
         for member in current_team_members:
             user_id_str = str(member.id)
             if user_id_str in data:
-                stats = count_user_statistics_for_range(member.id, parsed_from_date, parsed_to_date)
+                stats = count_user_statistics_for_range(interaction.guild.id, member.id, parsed_from_date, parsed_to_date)
                 report_data.append({
                     "name": member.display_name,
                     "hours": stats["total_hours_worked"],
@@ -289,11 +454,12 @@ async def export_full_report_command(
             file_suffix = "all_time"
         
         # Create reports directory
-        os.makedirs("data/reports", exist_ok=True)
+        reports_dir = guild_reports_dir(interaction.guild.id)
+        reports_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate CSV (only)
         csv_filename = f"activity_report_{file_suffix}.csv"
-        csv_path = os.path.join("data/reports", csv_filename)
+        csv_path = os.path.join(str(reports_dir), csv_filename)
         generate_csv_file(csv_path, report_data, parsed_from_date, parsed_to_date)
         
         # Create embed
@@ -353,23 +519,31 @@ async def export_full_report_command(
         await interaction.followup.send(f"Error generating report: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="weekly_report", description="Get weekly report for current-team members.")
-@commands.has_permissions(administrator=True)
-async def weekly_report(interaction: discord.Interaction, user: discord.Member = None, week_offset: int = 0):
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    user="Select a member from the Discord user picker for an individual weekly report.",
+    week_offset="Week offset relative to the current week. 0 is this week, 1 is last week.",
+)
+async def weekly_report(
+    interaction: discord.Interaction,
+    user: discord.Member = None,
+    week_offset: int = 0,
+):
     await interaction.response.defer(ephemeral=True)
-    
-    from .core.user_stats import get_weekly_stats
-    
+
     today = datetime.date.today()
     days_since_monday = today.weekday()
     current_week_monday = today - datetime.timedelta(days=days_since_monday)
     target_week_monday = current_week_monday - datetime.timedelta(weeks=week_offset)
-    
+
     if user:
         if not current_team_manager.is_current_team_member(user):
             await interaction.followup.send(f"{user.display_name} is not a current-team member.", ephemeral=True)
             return
         
-        stats = get_weekly_stats(user.id, target_week_monday)
+        stats = get_weekly_stats(interaction.guild.id, user.id, target_week_monday)
         remaining_hours = stats.get('remaining_hours', max(0, 32.0 - stats['total_hours']))
         
         embed = discord.Embed(
@@ -405,7 +579,7 @@ async def weekly_report(interaction: discord.Interaction, user: discord.Member =
         current_team_count = len(current_team_members)
         
         for member in current_team_members:
-            stats = get_weekly_stats(member.id, target_week_monday)
+            stats = get_weekly_stats(interaction.guild.id, member.id, target_week_monday)
             if stats["submissions_count"] > 0:
                 summary_data.append({
                     "name": member.display_name,
@@ -434,8 +608,37 @@ async def weekly_report(interaction: discord.Interaction, user: discord.Member =
         
         await interaction.followup.send(embed=embed, ephemeral=True)       
 
+
+@bot.tree.command(name="summary_report", description="Generate a team summary report file.")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    team="Choose the team to summarize.",
+    week_offset="Week offset relative to the current week. 0 is this week, 1 is last week.",
+    start_date="Summary start date in DD/MM/YYYY format. Defaults to the selected week when omitted.",
+    end_date="Summary end date in DD/MM/YYYY format. Defaults to the selected week when omitted.",
+)
+@app_commands.choices(team=SUMMARY_REPORT_TEAM_CHOICES)
+async def summary_report(
+    interaction: discord.Interaction,
+    team: str,
+    week_offset: int = 0,
+    start_date: str = None,
+    end_date: str = None,
+):
+    await send_summary_report(
+        interaction=interaction,
+        team=team,
+        week_offset=week_offset,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
 @bot.tree.command(name="refresh_current_team", description="Refresh the current-team member cache.")
-@commands.has_permissions(administrator=True)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
 async def refresh_current_team_cache(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
@@ -445,6 +648,7 @@ async def refresh_current_team_cache(interaction: discord.Interaction):
     await interaction.followup.send(f"Current-team cache refreshed. Found {count} active members.", ephemeral=True)
 
 @bot.tree.command(name="my_stats", description="View your weekly hours, warnings, and leave balance.")
+@app_commands.guild_only()
 async def my_stats(interaction: discord.Interaction):
     if not current_team_manager.is_current_team_member(interaction.user):
         await interaction.response.send_message(
@@ -461,17 +665,17 @@ async def my_stats(interaction: discord.Interaction):
     # Weekly stats
     days_since_monday = today.weekday()
     current_week_monday = today - datetime.timedelta(days=days_since_monday)
-    weekly = get_weekly_stats(interaction.user.id, current_week_monday)
+    weekly = get_weekly_stats(interaction.guild.id, interaction.user.id, current_week_monday)
 
     # Monthly stats
-    monthly = get_monthly_stats(interaction.user.id, today.month, today.year)
+    monthly = get_monthly_stats(interaction.guild.id, interaction.user.id, today.month, today.year)
 
     # Warnings this month
-    warning_count = get_user_warning_count(interaction.user.id, today.month, today.year)
+    warning_count = get_user_warning_count(interaction.guild.id, interaction.user.id, today.month, today.year)
 
     # Casual leave balance
     used_leaves, allowed_leaves = get_casual_leave_usage(
-        interaction.user.id, today.month, today.year, interaction.user.roles
+        interaction.guild.id, interaction.user.id, today.month, today.year, interaction.user.roles
     )
     if allowed_leaves == float("inf"):
         leave_text = f"{used_leaves} used (unlimited)"
@@ -515,16 +719,71 @@ async def my_stats(interaction: discord.Interaction):
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="warning_report", description="View warning summary for all current-team members.")
-@commands.has_permissions(administrator=True)
-async def warning_report(interaction: discord.Interaction, month: int = None, year: int = None):
+@bot.tree.command(name="warning", description="View warning summaries or issue warnings.")
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    month="Month to view in report mode.",
+    year="Year to view in report mode.",
+    give_warning="Set to true to issue warnings instead of viewing the report.",
+    member="Member to warn when give_warning is true.",
+    warning_count="Number of warnings to issue in give_warning mode (max 4 per day).",
+    reason="Optional reason when issuing warnings.",
+)
+async def warning(
+    interaction: discord.Interaction,
+    month: int = None,
+    year: int = None,
+    give_warning: bool = False,
+    member: discord.Member = None,
+    warning_count: app_commands.Range[int, 1, 4] = 1,
+    reason: str = None,
+):
     await interaction.response.defer(ephemeral=True)
+
+    if give_warning:
+        if member is None:
+            await interaction.followup.send(
+                "You must select a member when give_warning is enabled.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            _, normalized_reason = await give_manual_warning(
+                bot,
+                issuer=interaction.user,
+                target=member,
+                warning_count=warning_count,
+                reason=reason,
+            )
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        except Exception as exc:
+            await interaction.followup.send(
+                f"Could not add the warning: {exc}",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            format_manual_warning_response(
+                target_mention=member.mention,
+                giver_mention=interaction.user.mention,
+                warning_count=warning_count,
+                reason=normalized_reason,
+            ),
+            ephemeral=True,
+        )
+        return
 
     today = datetime.date.today()
     target_month = month if month and 1 <= month <= 12 else today.month
     target_year = year if year and year >= 2020 else today.year
 
-    warnings_data = load_warnings()
+    warnings_data = load_warnings(interaction.guild.id)
     current_team_members = current_team_manager.get_current_team_members(interaction.guild)
 
     # Build a lookup: user_id -> display_name
@@ -603,16 +862,22 @@ async def check_daily_warnings():
         
         current_team_members = current_team_manager.get_current_team_members(guild)
         current_team_members_count = len(current_team_members)
+        submission_user_ids, leave_user_ids = get_daily_activity_sets(guild.id, yesterday)
         
         print(f"Found {current_team_members_count} current-team members")
         
         for member in current_team_members:
             total_members_checked += 1
             try:
-                warnings_to_give = await should_give_warning(member, yesterday)
+                warnings_to_give = await should_give_warning(
+                    member,
+                    yesterday,
+                    submission_user_ids=submission_user_ids,
+                    leave_user_ids=leave_user_ids,
+                )
                 
                 if warnings_to_give > 0:
-                    await give_warning(bot, member, warnings_to_give)
+                    await record_warning(bot, member, warnings_to_give, for_date=yesterday)
                     total_warnings_given += warnings_to_give
                     
                     if warnings_to_give == 2:
@@ -633,10 +898,10 @@ async def check_daily_warnings():
                             reason = "core member/4th year (exempt)"
                             exempted_count += 1
                     else:
-                        if user_has_leave_on_date(member.id, yesterday):
+                        if member.id in leave_user_ids:
                             reason = "has approved leave"
                             leave_count += 1
-                        elif get_user_submissions_for_date(member.id, yesterday):
+                        elif member.id in submission_user_ids:
                             reason = "already submitted"
                             submitted_count += 1
                         else:
@@ -658,7 +923,7 @@ async def check_daily_warnings():
         print(f" Total warnings given: {total_warnings_given}")
         
         # Use WARNING_CHANNEL_ID from config
-        warning_channel = bot.get_channel(WARNING_CHANNEL_ID)
+        warning_channel = guild.get_channel(WARNING_CHANNEL_ID)
         if warning_channel and total_warnings_given > 0:
             summary_message = f"""
 **Daily Warning Summary - {yesterday.strftime('%d-%m-%Y')}**
@@ -690,17 +955,13 @@ async def daily_reminder():
     
     for guild in bot.guilds:
         print(f"Checking reminders for guild: {guild.name}")
-        
-        non_submitters = get_users_without_submission_for_date(guild.members, today)
-        
+        current_team_members = current_team_manager.get_current_team_members(guild)
+        submission_user_ids, leave_user_ids = get_daily_activity_sets(guild.id, today)
         valid_non_submitters = []
-        for member in non_submitters:
-            if member.bot:
+        for member in current_team_members:
+            if member.id in submission_user_ids:
                 continue
-
-            if not current_team_manager.is_current_team_member(member):
-                continue
-            if user_has_leave_on_date(member.id, today):
+            if member.id in leave_user_ids:
                 print(f"Skipped reminder for {member.display_name}: on approved leave")
                 continue
 

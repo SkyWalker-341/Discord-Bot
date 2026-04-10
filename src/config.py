@@ -22,6 +22,8 @@ WARNING_CHANNEL_ID = int(os.getenv("WARNING_CHANNEL_ID", "0"))
 CURRENT_TEAM_ROLE_NAME = os.getenv("CURRENT_TEAM_ROLE_NAME", "current-team")
 FIRST_PROBATION_ROLE_NAME = os.getenv("FIRST_PROBATION_ROLE_NAME", "1st Probation")
 SECOND_PROBATION_ROLE_NAME = os.getenv("SECOND_PROBATION_ROLE_NAME", "2nd Probation")
+TEAM_LEAD_ROLE_NAME = os.getenv("TEAM_LEAD_ROLE_NAME", "Team Lead")
+OLD_TRAINER_ROLE_NAME = os.getenv("OLD_TRAINER_ROLE_NAME", "Old Trainer")
 
 # File Paths
 DATA_FOLDER = os.getenv("DATA_FOLDER", "data")
@@ -40,8 +42,13 @@ WEEKLY_HOUR_TARGET = float(os.getenv("WEEKLY_HOUR_TARGET", "32.0"))
 LATE_SUBMISSION_MONTHS_LIMIT = int(os.getenv("LATE_SUBMISSION_MONTHS_LIMIT", "3"))
 
 # Warning Settings
-FIRST_PROBATION_WARNING_COUNT = int(os.getenv("FIRST_PROBATION_WARNING_COUNT", "3"))
-SECOND_PROBATION_WARNING_COUNT = int(os.getenv("SECOND_PROBATION_WARNING_COUNT", "4"))
+FIRST_PROBATION_WARNING_COUNT = int(os.getenv("FIRST_PROBATION_WARNING_COUNT", "4"))
+SECOND_PROBATION_WARNING_COUNT = int(os.getenv("SECOND_PROBATION_WARNING_COUNT", "6"))
+
+# Team Summary LLM Settings
+TEAM_SUMMARY_API_KEY = os.getenv("TEAM_SUMMARY_API_KEY") or os.getenv("OPENAI_API_KEY")
+TEAM_SUMMARY_MODEL = os.getenv("TEAM_SUMMARY_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1-mini"))
+TEAM_SUMMARY_BASE_URL = os.getenv("TEAM_SUMMARY_BASE_URL") or os.getenv("OPENAI_BASE_URL")
 
 # Timezone Settings
 IST_OFFSET_HOURS = int(os.getenv("IST_OFFSET_HOURS", "5"))
@@ -93,6 +100,8 @@ def print_config():
     print(f"Warning Channel ID: {WARNING_CHANNEL_ID}")
     print(f"Current Team Role: {CURRENT_TEAM_ROLE_NAME}")
     print(f"Weekly Hour Target: {WEEKLY_HOUR_TARGET}")
+    print(f"Team Summary Model: {TEAM_SUMMARY_MODEL}")
+    print(f"Team Summary Configured: {'Yes' if TEAM_SUMMARY_API_KEY else 'No'}")
     print(f"Command Prefix: {COMMAND_PREFIX}")
     print("")
 

@@ -1,10 +1,13 @@
+from ..config import CURRENT_TEAM_ROLE_NAME
+
+
 def has_current_team_role(user_roles):
     """
     Check if user has the 'current-team' role.
     Only members with this role should be monitored by the bot.
     """
     role_names = [role.name.lower() for role in user_roles]
-    return "current-team" in role_names
+    return CURRENT_TEAM_ROLE_NAME.lower() in role_names
 
 def validate_current_team_member(user_roles):
     """

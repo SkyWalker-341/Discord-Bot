@@ -1,4 +1,6 @@
 .env
+data/
+data.zip
 __pycache__/
 *.pyc
 *.csv
@@ -6,5 +8,4 @@ __pycache__/
 *.log
 .DS_Store
 .vscode/
-*.md
 *.pem

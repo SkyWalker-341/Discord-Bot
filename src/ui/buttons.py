@@ -1,50 +1,50 @@
 import discord
 from ..core.user_stats import find_pending_request, update_pending_request
 from ..config import LEAVE_TRACKING_CHANNEL_ID
-
-ROLE_HIERARCHY = {
-    "Trainee Member": 1,
-    "2nd_years": 2,
-    "3rd_years": 3,
-    "4th_years": 4,
-    "Core Member": 4
-}
-
-
-def get_user_level(user_roles):
-    level = 0
-    for role in user_roles:
-        if role.name in ROLE_HIERARCHY:
-            level = max(level, ROLE_HIERARCHY[role.name])
-    return level
-
+from ..core.hierarchy import can_act_on_member, get_role_display_name
+from discord.utils import escape_markdown, escape_mentions
 
 def can_approve_request(approver_roles, requester_roles):
     """Check if approver can approve requester's leave based on hierarchy."""
-    approver_level = get_user_level(approver_roles)
-    requester_level = get_user_level(requester_roles)
-    return approver_level > requester_level
+    return can_act_on_member(approver_roles, requester_roles)
 
 
-def get_role_display_name(user_roles):
-    """Get the display name of user's highest role"""
-    highest_level = 0
-    role_name = "Unknown"
-
-    for role in user_roles:
-        if role.name in ROLE_HIERARCHY:
-            level = ROLE_HIERARCHY[role.name]
-            if level > highest_level:
-                highest_level = level
-                role_name = role.name
-
-    return role_name
+def sanitize_display_text(value: str) -> str:
+    cleaned = (value or "").strip().replace("```", "'''")
+    return escape_mentions(escape_markdown(cleaned))
 
 
 class LeaveApprovalView(discord.ui.View):
     def __init__(self, request_id: str):
         super().__init__(timeout=None)
         self.request_id = request_id
+        self._add_button(
+            label="Approve",
+            style=discord.ButtonStyle.green,
+            suffix="approve",
+            callback=self.approve_button_callback,
+        )
+        self._add_button(
+            label="Deny",
+            style=discord.ButtonStyle.red,
+            suffix="deny",
+            callback=self.deny_button_callback,
+        )
+        self._add_button(
+            label="Thread",
+            style=discord.ButtonStyle.blurple,
+            suffix="thread",
+            callback=self.create_thread_button_callback,
+        )
+
+    def _add_button(self, label: str, style: discord.ButtonStyle, suffix: str, callback):
+        button = discord.ui.Button(
+            label=label,
+            style=style,
+            custom_id=f"leave:{self.request_id}:{suffix}"
+        )
+        button.callback = callback
+        self.add_item(button)
 
     async def _close_thread(self, thread: discord.Thread, reason: str, approver_name: str):
         await thread.edit(name=f"{thread.name} - ({reason})", locked=True, archived=True)
@@ -55,7 +55,7 @@ class LeaveApprovalView(discord.ui.View):
         Check if request still exists and is in pending state.
         Returns request_data if valid, None otherwise.
         """
-        request_data = find_pending_request(self.request_id)
+        request_data = find_pending_request(interaction.guild.id, self.request_id)
         
         if not request_data:
             await interaction.response.send_message(
@@ -69,7 +69,7 @@ class LeaveApprovalView(discord.ui.View):
         if current_status != "pending":
             # Get who processed it
             approver_id = request_data.get("approver_id")
-            status_emoji = "[Approved]" if current_status == "approved" else "[Denied]"
+            status_emoji = "[Approved]" if current_status in {"approved", "auto-approved"} else "[Denied]"
             
             if approver_id:
                 try:
@@ -118,18 +118,31 @@ class LeaveApprovalView(discord.ui.View):
 
         return True
 
+    async def _check_thread_permissions(self, interaction: discord.Interaction, requester_id: int) -> bool:
+        if interaction.user.id == requester_id:
+            return True
+
+        try:
+            requester = await interaction.guild.fetch_member(requester_id)
+        except discord.NotFound:
+            await interaction.response.send_message("Could not find the requester.", ephemeral=True)
+            return False
+
+        if not can_approve_request(interaction.user.roles, requester.roles):
+            await interaction.response.send_message(
+                "Insufficient permissions to open a private discussion for this request.",
+                ephemeral=True,
+            )
+            return False
+
+        return True
+
     async def _disable_all_buttons(self, interaction: discord.Interaction):
         """Disable all buttons in the view"""
         for child in self.children:
             child.disabled = True
-        
-        try:
-            await interaction.message.edit(view=self)
-        except:
-            pass  # Message might be deleted or inaccessible
 
-    @discord.ui.button(label="Approve", style=discord.ButtonStyle.green, custom_id="leave_approve_btn")
-    async def approve_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def approve_button_callback(self, interaction: discord.Interaction):
         # STEP 1: Check request state FIRST (before any other checks)
         request_data = await self._check_request_state(interaction)
         if not request_data:
@@ -140,13 +153,20 @@ class LeaveApprovalView(discord.ui.View):
             return
 
         # STEP 3: Update request status atomically
-        updated_request = update_pending_request(self.request_id, "approved", interaction.user.id)
+        updated_request = update_pending_request(
+            interaction.guild.id,
+            self.request_id,
+            "approved",
+            interaction.user.id,
+            expected_status="pending",
+        )
         if not updated_request:
             await interaction.response.send_message(
                 "Failed to update request. It may have been modified by another user.",
                 ephemeral=True
             )
             return
+        request_data = updated_request
 
         # Get participants
         approver = interaction.user
@@ -160,17 +180,20 @@ class LeaveApprovalView(discord.ui.View):
         leave_type = request_data.get("type", "Unknown").capitalize()
         start_date = request_data["dates"]["start"]
         end_date = request_data["dates"]["end"]
-        reason = request_data.get("reason", "No reason provided")
-        mode = request_data.get("mode", "")
+        reason = sanitize_display_text(request_data.get("reason", "No reason provided"))
+        mode = sanitize_display_text(request_data.get("mode", ""))
 
         # Create tracking message
         mode_text = f"\nMode: {mode}" if mode else ""
-        leave_tracking_message = f"""```Leave on ({start_date} to {end_date})
-Leave Type: {leave_type}
-Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.mention}"""
+        leave_tracking_message = (
+            f"Leave on ({start_date} to {end_date})\n"
+            f"Leave Type: {leave_type}\n"
+            f"Reason: {reason}{mode_text}\n"
+            f"From {requester.display_name} Approved by: {approver.display_name}"
+        )
 
         # Update embed
-        original_embed = interaction.message.embeds[0]
+        original_embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
         original_embed.title = "Leave Request - Approved"
         original_embed.color = discord.Color.green()
         original_embed.set_footer(text=f"Approved by {approver.display_name} ({get_role_display_name(approver.roles)})")
@@ -180,10 +203,12 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
         await interaction.response.edit_message(embed=original_embed, view=self)
 
         # Post to tracking channel
-        #leave_tracking_channel_id = 1139635542640840814
-        leave_tracking_channel = interaction.client.get_channel(LEAVE_TRACKING_CHANNEL_ID)
+        leave_tracking_channel = interaction.guild.get_channel(LEAVE_TRACKING_CHANNEL_ID)
         if leave_tracking_channel:
-            await leave_tracking_channel.send(leave_tracking_message)
+            await leave_tracking_channel.send(
+                leave_tracking_message,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
         else:
             print(f"Leave tracking channel {LEAVE_TRACKING_CHANNEL_ID} not found")
 
@@ -191,8 +216,7 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
         if isinstance(interaction.channel, discord.Thread):
             await self._close_thread(interaction.channel, "Approved", approver.display_name)
 
-    @discord.ui.button(label="Deny", style=discord.ButtonStyle.red, custom_id="leave_deny_btn")
-    async def deny_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def deny_button_callback(self, interaction: discord.Interaction):
         # STEP 1: Check request state FIRST
         request_data = await self._check_request_state(interaction)
         if not request_data:
@@ -203,13 +227,20 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
             return
 
         # STEP 3: Update request status atomically
-        updated_request = update_pending_request(self.request_id, "denied", interaction.user.id)
+        updated_request = update_pending_request(
+            interaction.guild.id,
+            self.request_id,
+            "denied",
+            interaction.user.id,
+            expected_status="pending",
+        )
         if not updated_request:
             await interaction.response.send_message(
                 "Failed to update request. It may have been modified by another user.",
                 ephemeral=True
             )
             return
+        request_data = updated_request
 
         # Get participants
         approver = interaction.user
@@ -223,17 +254,20 @@ Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.me
         leave_type = request_data.get("type", "Unknown").capitalize()
         start_date = request_data["dates"]["start"]
         end_date = request_data["dates"]["end"]
-        reason = request_data.get("reason", "No reason provided")
-        mode = request_data.get("mode", "")
+        reason = sanitize_display_text(request_data.get("reason", "No reason provided"))
+        mode = sanitize_display_text(request_data.get("mode", ""))
 
         # Create tracking message
         mode_text = f"\nMode: {mode}" if mode else ""
-        leave_tracking_message = f"""```Leave on ({start_date} to {end_date})
-Leave Type: {leave_type}
-Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.mention}"""
+        leave_tracking_message = (
+            f"Leave on ({start_date} to {end_date})\n"
+            f"Leave Type: {leave_type}\n"
+            f"Reason: {reason}{mode_text}\n"
+            f"From {requester.display_name} Denied by: {approver.display_name}"
+        )
 
         # Update embed
-        original_embed = interaction.message.embeds[0]
+        original_embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()
         original_embed.title = "Leave Request - Denied"
         original_embed.color = discord.Color.red()
         original_embed.set_footer(text=f"Denied by {approver.display_name} ({get_role_display_name(approver.roles)})")
@@ -243,20 +277,24 @@ Reason: {reason}{mode_text}```From {requester.mention} Denied by: {approver.ment
         await interaction.response.edit_message(embed=original_embed, view=self)
 
         # Post to tracking channel
-        #leave_tracking_channel_id = 1139635542640840814
-        leave_tracking_channel = interaction.client.get_channel(LEAVE_TRACKING_CHANNEL_ID)
+        leave_tracking_channel = interaction.guild.get_channel(LEAVE_TRACKING_CHANNEL_ID)
         if leave_tracking_channel:
-            await leave_tracking_channel.send(leave_tracking_message)
+            await leave_tracking_channel.send(
+                leave_tracking_message,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
         # Close thread if in one
         if isinstance(interaction.channel, discord.Thread):
             await self._close_thread(interaction.channel, "Denied", approver.display_name)
 
-    @discord.ui.button(label="Thread", style=discord.ButtonStyle.blurple, custom_id="leave_create_thread_btn")
-    async def create_thread_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def create_thread_button_callback(self, interaction: discord.Interaction):
         # Check request state
         request_data = await self._check_request_state(interaction)
         if not request_data:
+            return
+
+        if not await self._check_thread_permissions(interaction, request_data["member_id"]):
             return
 
         try:

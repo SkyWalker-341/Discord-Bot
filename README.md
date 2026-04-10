@@ -1,368 +1,370 @@
 # Discord Work & Leave Tracker Bot
 
-A comprehensive Discord bot system for managing team member productivity, tracking daily work status, and processing leave requests with hierarchical approval workflows. The bot implements role-based access control, focusing exclusively on active team members while providing automated compliance monitoring and reporting capabilities.
+A production-oriented Discord bot for tracking daily status updates, managing leave workflows, enforcing warning rules, and generating operational reports for role-based teams.
 
-## Table of Contents
-- [Project Overview](#project-overview)
-- [Core Features](#core-features)
-- [System Architecture](#system-architecture)
-- [Installation & Setup](#installation--setup)
-- [Discord Server Configuration](#discord-server-configuration)
-- [Usage Guide](#usage-guide)
-- [Technical Implementation](#technical-implementation)
-- [Configuration Management](#configuration-management)
-- [Data Management](#data-management)
-- [Monitoring & Reporting](#monitoring--reporting)
-- [Security & Compliance](#security--compliance)
-- [Troubleshooting](#troubleshooting)
-- [Development & Maintenance](#development--maintenance)
+This README is a technical reference for the current codebase. It documents the runtime architecture, module-by-module responsibilities, data flow, and operational workflows that exist in the project today.
 
-## Project Overview
+## Overview
 
-This Discord bot serves as a comprehensive workforce management system designed for academic or professional teams. It automates daily productivity tracking, manages various types of leave requests, and maintains compliance through an intelligent warning system. The bot operates with role-based filtering, ensuring only active team members (those with the "current-team" role) are monitored and managed.
+The bot is built around four core responsibilities:
 
-### Key Objectives
-- **Productivity Tracking**: Monitor daily work hours and activities with 32-hour weekly targets
-- **Leave Management**: Process three types of leave requests with hierarchical approval workflows
-- **Compliance Monitoring**: Automated warning system with probation escalation
-- **Team Focus**: Role-based filtering to monitor only active team members
-- **Administrative Oversight**: Comprehensive reporting and data export capabilities
+1. Collect daily status updates from current team members.
+2. Manage leave requests with validation, auto-approval, and role-based manual approval.
+3. Enforce compliance through reminders, warnings, and probation escalation.
+4. Provide reporting for activity, warnings, and LLM-generated team summaries.
 
-## Core Features
+The bot only manages members with the configured `current-team` role.
 
-### Daily Status Updates
-- **Interactive Forms**: Discord modal-based forms for easy data entry
-- **Flexible Work Options**: Support for Work From Home (WFH) with adjusted hour requirements
-- **Time Validation**: Minimum hour requirements based on day type and work location
-- **Late Submission Tracking**: Automatic flagging of backdated submissions
-- **Weekly Target Monitoring**: Real-time progress tracking toward 32-hour weekly goals
-- **Dynamic Channel Routing**: Automatic posting to appropriate team/year-specific channels
+## Current Command Surface
 
-### Leave Management System
-Three distinct leave types with tailored workflows:
+| Command | Purpose | Access |
+| --- | --- | --- |
+| `/setup_support_channel` | Post the main support panel with interactive buttons | Owner only |
+| `/export_full_report` | Export CSV activity report for a date range | Administrator |
+| `/weekly_report` | Show weekly productivity report for one member or the current team | Administrator |
+| `/summary_report` | Generate and upload a team summary report file using the LLM integration | Administrator |
+| `/refresh_current_team` | Rebuild the cached `current-team` membership list | Administrator |
+| `/my_stats` | Show personal weekly, monthly, warning, and leave metrics | Current-team member |
+| `/warning` | View warning report or issue manual warnings | Administrator |
 
-#### Casual Leave
-- **Monthly Allocation**: 2 days per month for regular members
-- **Unlimited Access**: Core Members receive unlimited casual leave
-- **Auto-approval**: Instant processing within monthly limits
-- **Usage Tracking**: Monthly consumption monitoring and rollover prevention
+## UI Surface
 
-#### Medical Leave
-- **Approval Required**: Hierarchical approval process based on role levels
-- **Flexible Modes**: Support for both Day-off and Work From Home options
-- **Detailed Documentation**: Comprehensive reason requirement for audit trails
-- **Priority Processing**: Medical leave receives expedited handling
+The support channel message exposes two primary buttons:
 
-#### Special Leave
-- **Emergency Support**: For exams, family emergencies, and exceptional circumstances
-- **Approval Required**: Senior-level approval mandatory
-- **Detailed Justification**: Comprehensive reason documentation required
-- **Extended Duration**: Support for multi-day special circumstances
+- `Status Updates`
+- `Leave Tracking`
 
-### Intelligent Warning System
-- **Daily Monitoring**: Automated checks at midnight IST for compliance
-- **Role-based Exemptions**: Core Members and 4th-year students exempt
-- **Progressive Probation**: 3 warnings trigger 1st Probation, 4+ trigger 2nd Probation
-- **Leave Integration**: Approved leave automatically exempts from warnings
-- **Monthly Reset**: Warning counters reset monthly for fresh starts
+From there the bot uses Discord native UI components:
 
-### Advanced Features
-- **Performance Caching**: 30-minute role caching with automatic refresh
-- **Real-time Updates**: Instant cache updates on role changes
-- **CSV Export**: Comprehensive data export with date range filtering
-- **Channel Auto-provisioning**: Automatic creation of missing team channels
-- **Multi-timezone Support**: IST-based scheduling with UTC conversion
+- `WFHSelect` for the work-from-hostel choice during status submission
+- `LeaveTypeView` for leave-type selection
+- Modal forms for status and leave submission
+- Persistent approval buttons for leave request review
 
-## System Architecture
+## Architecture
 
-### Project Structure
+### High-Level Runtime Flow
+
+```mermaid
+flowchart TD
+    A["Discord User"] --> B["src/main.py"]
+    B --> C["Interactive Views\nSupportView / WFHSelect / LeaveTypeView"]
+    C --> D["Modal Forms\nsecure_forms.py"]
+    D --> E["Core Logic\nuser_stats.py / warnings.py / hierarchy.py"]
+    E --> F["Guild-Scoped Storage\nstorage.py"]
+    B --> G["Approval Views\nbuttons.py"]
+    G --> E
+    B --> H["Background Jobs\nwarnings + reminders"]
+    H --> E
+    B --> I["summary_report"]
+    I --> J["team_summary.py"]
+    J --> K["LLM Provider API"]
+    J --> L["Markdown Report File"]
+    B --> M["Discord Channels\nstatus / leave / warnings / reports"]
 ```
-BOT/
+
+### Operational Workflow
+
+```mermaid
+flowchart TD
+    A["User opens support panel"] --> B["Choose Status Updates or Leave Tracking"]
+    B --> C["Status Flow"]
+    B --> D["Leave Flow"]
+
+    C --> E["StatusForm validates date, roles, hours, text"]
+    E --> F["record_status_update(...)"]
+    F --> G["Post to team/year status channel"]
+
+    D --> H["Leave modal validates range, overlaps, reason, role rules"]
+    H --> I["Auto-approved or pending request"]
+    I --> J["buttons.py approve / deny flow"]
+    J --> K["Update pending request + tracking channel"]
+
+    G --> L["Daily reminder job"]
+    K --> M["Daily warning job"]
+    L --> N["Reminder messages to missing submitters"]
+    M --> O["Warnings, probation escalation, warning summary"]
+
+    P["Admin runs /summary_report"] --> Q["Collect team status updates"]
+    Q --> R["LLM summary generation"]
+    R --> S["Write markdown file"]
+    S --> T["Upload file to Discord channel"]
+```
+
+## Project Structure
+
+```text
+Discord-Bot/
 ├── src/
-│   ├── core/                      # Core business logic
-│   │   | 
-│   │   ├── user_stats.py         # User data management and statistics
-│   │   ├── warnings.py           # Warning system and probation logic
-│   │   ├── channel_lookup.py     # Dynamic channel routing system
-│   │   ├── current_team_manager.py # Role-based filtering with caching
-│   │   └── utils.py              # Shared utility functions
-│   ├── ui/                       # User interface components
-│   │   ├── forms.py              # Discord modal forms for data input
-│   │   └── buttons.py            # Interactive button interfaces
-│   ├── data/                     # JSON-based data storage
-│   │   ├── users.json            # User submissions and statistics
-│   │   ├── pending.json          # Pending leave requests
-│   │   ├── warnings.json         # Warning tracking data
-│   │   ├── casual_leave.json     # Casual leave history
-│   │   └── current_team_cache.json # Role cache storage
-│   └── main.py                   # Bot initialization and command handlers
-├── .env                          # Environment configuration
-└── requirements.txt              # Python dependencies
+│   ├── config.py
+│   ├── main.py
+│   ├── core/
+│   │   ├── channel_lookup.py
+│   │   ├── current_team_manager.py
+│   │   ├── hierarchy.py
+│   │   ├── storage.py
+│   │   ├── team_summary.py
+│   │   ├── user_stats.py
+│   │   ├── utils.py
+│   │   └── warnings.py
+│   └── ui/
+│       ├── buttons.py
+│       ├── forms.py
+│       └── secure_forms.py
+├── data/
+├── .env
+└── README.md
 ```
 
-### Data Flow Architecture
-1. **User Interaction** → Discord UI (Buttons/Modals)
-2. **Validation Layer** → Input sanitization and business rule checking
-3. **Business Logic** → Core processing and state management
-4. **Data Persistence** → JSON file storage with atomic writes
-5. **Channel Distribution** → Dynamic routing to appropriate channels
-6. **Cache Management** → Performance optimization and consistency
+## Module-by-Module Responsibilities
 
-## Installation & Setup
+### Entry and Configuration
+
+| Module | Responsibility |
+| --- | --- |
+| `src/main.py` | Application entry point. Registers slash commands, support views, background tasks, and top-level orchestration. |
+| `src/config.py` | Loads environment variables and central runtime settings such as channel IDs, role names, report settings, and LLM settings. |
+
+### Core Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `src/core/storage.py` | Provides guild-scoped file paths, atomic JSON writes, and per-path locking for safe local persistence. |
+| `src/core/user_stats.py` | Stores and queries status updates, weekly/monthly statistics, pending leave requests, and per-date submission lookups. |
+| `src/core/warnings.py` | Implements warning rules, leave exemption checks, manual warning validation, warning history, and probation escalation. |
+| `src/core/hierarchy.py` | Defines the role hierarchy and authorization rules used by warnings and leave approvals. |
+| `src/core/current_team_manager.py` | Maintains a cached view of current-team members per guild and refreshes it on role changes. |
+| `src/core/channel_lookup.py` | Resolves or creates the correct team/year status update channel for a member. |
+| `src/core/team_summary.py` | Aggregates team updates, builds LLM prompts, handles provider errors, writes markdown summary files, and powers `/summary_report`. |
+| `src/core/utils.py` | Shared role validation helpers, especially current-team validation. |
+
+### UI Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `src/ui/secure_forms.py` | Primary implementation for all status and leave modals. Contains validation, overlap checks, leave rules, CSV export, and submission handling. |
+| `src/ui/forms.py` | Compatibility shim that re-exports from `secure_forms.py` so older imports continue to work. |
+| `src/ui/buttons.py` | Handles persistent leave approval buttons, thread creation, message updates, and tracking channel messages. |
+
+## Key Workflows
+
+### 1. Daily Status Update Workflow
+
+1. User clicks `Status Updates` in the support panel.
+2. Bot shows the `WFHSelect` choice.
+3. Bot opens `StatusForm`.
+4. `StatusForm` validates:
+   - current-team membership
+   - team and year roles
+   - date format and late-submission window
+   - hours worked
+   - work description and blockers
+5. `record_status_update(...)` writes the submission to guild-scoped storage.
+6. The bot posts the formatted update into the correct team/year status channel.
+
+### 2. Leave Request Workflow
+
+1. User clicks `Leave Tracking`.
+2. Bot shows leave-type selection.
+3. One of these modals opens:
+   - `CasualLeaveModal`
+   - `MedicalLeaveModal`
+   - `SpecialLeaveModal`
+   - `WorkFromHostelModal`
+4. The form validates:
+   - current-team membership
+   - role prerequisites
+   - date range
+   - overlap with existing requests
+   - reason length
+   - leave-specific business rules
+5. Request is either:
+   - auto-approved immediately, or
+   - stored as pending and sent to the leave request channel
+6. Admin reviews and uses approval buttons in `buttons.py`.
+7. Request status is updated atomically and logged to the leave tracking channel.
+
+### 3. Warning Workflow
+
+1. Background task runs once per configured day.
+2. The bot preloads:
+   - users who submitted status for the target date
+   - users who are on approved leave for the target date
+3. For each current-team member, `should_give_warning(...)` checks:
+   - bot status
+   - exemption roles
+   - required team/year roles
+   - approved leave
+   - submitted status
+4. If needed, `give_warning(...)`:
+   - writes warning history
+   - updates monthly warning count
+   - posts to warning channel
+   - escalates probation roles when thresholds are crossed
+5. Admins can also issue manual warnings through `/warning`.
+
+### 4. Reminder Workflow
+
+1. Background reminder task runs once per configured day.
+2. It preloads submitted-user and leave-user sets once for the guild/date.
+3. It filters current-team members who:
+   - have not submitted
+   - are not on approved leave
+   - still match required team/year rules
+4. It groups those users by their status-update channel.
+5. It posts batched reminder mentions into the relevant channels.
+
+### 5. Team Summary Report Workflow
+
+1. Admin runs `/summary_report`.
+2. Bot resolves the selected team and date range.
+3. `team_summary.py` collects all relevant status updates for that team.
+4. Bot builds a structured LLM prompt with:
+   - per-member updates
+   - date range
+   - formatting rules
+5. LLM returns markdown summary.
+6. Bot writes a report file under the guild reports directory.
+7. Bot uploads the file back to Discord.
+
+## Data Storage Model
+
+The bot stores data locally in guild-scoped folders:
+
+```text
+data/
+└── <guild_id>/
+    ├── users.json
+    ├── pending.json
+    ├── warnings.json
+    ├── casual_leave.json
+    └── reports/
+```
+
+### File Responsibilities
+
+| File | Purpose |
+| --- | --- |
+| `users.json` | Status submissions, totals, late-submission counters |
+| `pending.json` | Pending and approved leave requests |
+| `warnings.json` | Monthly warning counts plus warning history |
+| `casual_leave.json` | Casual leave history |
+| `reports/` | Exported CSV reports and markdown summary reports |
+
+### Persistence Design
+
+- Storage is guild-scoped to avoid cross-server data mixing.
+- Writes are atomic to reduce corruption risk.
+- File access is guarded by in-process locks.
+- Legacy flat data can be seeded into guild-scoped folders when needed.
+
+## Role and Access Model
+
+### Required Team Roles
+
+- `RedTeam`
+- `Android`
+- `BlockChain`
+- `Mobile`
+
+### Required Year Roles
+
+- `Trainee Member`
+- `1st_years`
+- `2nd_years`
+- `3rd_years`
+- `4th_years`
+
+### Important Access Rules
+
+- Only `current-team` members are tracked.
+- Slash-command permissions are enforced with `app_commands`.
+- Manual warnings and leave approvals use the shared hierarchy rules.
+- Equal or higher roles cannot be warned manually.
+- Hostel work does not exempt users from posting status updates.
+
+## Background Jobs
+
+The bot runs two scheduled loops from `main.py`:
+
+| Task | Purpose |
+| --- | --- |
+| `check_daily_warnings` | Applies warnings for missing submissions when no valid leave exists |
+| `daily_reminder` | Sends reminder messages before the reporting cutoff |
+
+The schedules are configured through environment variables in `config.py`.
+
+## Reporting
+
+### Built-in Reports
+
+- Weekly productivity report via `/weekly_report`
+- Full CSV activity export via `/export_full_report`
+- Warning summary and manual warning issue flow via `/warning`
+- LLM-generated team summary via `/summary_report`
+
+### Summary Report Notes
+
+- Uses `TEAM_SUMMARY_API_KEY` or `OPENAI_API_KEY`
+- Supports `TEAM_SUMMARY_MODEL`
+- Supports `TEAM_SUMMARY_BASE_URL` for compatible providers
+- Returns clear provider errors for quota, auth, and API availability failures
+
+## Setup
 
 ### Prerequisites
-- Python 3.9 or higher
-- Discord Bot Token with appropriate permissions
-- Discord server with administrative access
 
-### Dependencies
+- Python 3.10 or newer recommended
+- A Discord bot token
+- A Discord server with the required roles and channels
+
+### Install
+
 ```bash
-pip install discord.py python-dotenv
+pip install discord.py python-dotenv python-dateutil openai
 ```
 
-### Environment Configuration
-Create a `.env` file with the following structure:
+### Example `.env`
+
 ```env
-# Discord Bot Authentication
-DISCORD_BOT_TOKEN=your_bot_token_here
+DISCORD_BOT_TOKEN=your_bot_token
 
-# Channel Configuration
-SUPPORT_CHANNEL_ID=1415432843886329988
-LEAVE_REQUEST_CHANNEL_ID=1416718401044349038
-LEAVE_TRACKING_CHANNEL_ID=1415019014224089147
-WARNING_CHANNEL_ID=1416744851457704158
+SUPPORT_CHANNEL_ID=123
+LEAVE_TRACKING_CHANNEL_ID=123
+LEAVE_REQUEST_CHANNEL_ID=123
+WARNING_CHANNEL_ID=123
 
-# Role Configuration
 CURRENT_TEAM_ROLE_NAME=current-team
+FIRST_PROBATION_ROLE_NAME=1st Probation
+SECOND_PROBATION_ROLE_NAME=2nd Probation
+TEAM_LEAD_ROLE_NAME=Team Lead
+OLD_TRAINER_ROLE_NAME=Old Trainer
 
-# Performance Settings
-CACHE_DURATION_MINUTES=30
+WEEKLY_HOUR_TARGET=32.0
+MAX_CASUAL_LEAVE_DAYS=2
+MAX_SPECIAL_LEAVE_DAYS=92
+
+TEAM_SUMMARY_API_KEY=your_provider_key
+TEAM_SUMMARY_MODEL=gpt-4.1-mini
 ```
 
-### Bot Initialization
-```bash
-# Navigate to project directory
-cd BOT
+### Run
 
-# Run the bot
+```bash
 python -m src.main
 ```
 
-## Discord Server Configuration
+## Development Notes
 
-### Essential Role Structure
-Configure these exact role names in your Discord server:
+- `secure_forms.py` is the active forms implementation.
+- `forms.py` exists to preserve older import paths.
+- `storage.py` should be used for new persisted data rather than direct file writes.
+- Shared rule changes should be centralized in `hierarchy.py`, `warnings.py`, `user_stats.py`, or `secure_forms.py` instead of duplicating logic in commands.
+- Performance-sensitive paths should preload guild/date data once per loop, following the pattern now used in the warning and reminder tasks.
 
-#### Primary Roles
-- **`current-team`**: Primary filtering role - only members with this role are monitored
-- **`Core Member`**: Senior role with unlimited leave privileges and auto-approval
-- **`Trainee Member`**: Entry-level position equivalent to 1st year
-- **`1st_years`, `2nd_years`, `3rd_years`, `4th_years`**: Academic year classifications
+## Suggested Next Improvements
 
-#### Team Classification Roles
-- **`RedTeam`**: Security and penetration testing team
-- **`Android`**: Mobile application development team
-- **`BlockChain`**: Blockchain and cryptocurrency development
-- **`Mobile`**: General mobile development team
-
-#### Auto-managed Roles
-- **`1st Probation`**: Applied automatically after 3 monthly warnings
-- **`2nd Probation`**: Applied automatically after 4+ monthly warnings
-
-### Channel Configuration
-
-#### Required Management Channels
-Create these channels manually and update IDs in your `.env` file:
-
-1. **Support Channel** (SUPPORT_CHANNEL_ID)
-   - Primary bot interface location
-   - Houses main interaction buttons
-   - Accessible to all current-team members
-
-2. **Leave Request Channel** (LEAVE_REQUEST_CHANNEL_ID)
-   - Displays pending leave requests
-   - Administrative approval interface
-   - Restricted to management personnel
-
-3. **Leave Tracking Channel** (LEAVE_TRACKING_CHANNEL_ID)
-   - Logs all leave approvals and denials
-   - Audit trail for administrative review
-   - Historical record keeping
-
-4. **Warning Channel** (WARNING_CHANNEL_ID)
-   - Automated warning notifications
-   - Probation status announcements
-   - Compliance monitoring alerts
-
-#### Auto-generated Status Channels
-The bot automatically creates status update channels following this pattern:
-- **Category**: Team name (e.g., "Red Teaming", "Mobile", "Blockchain")
-- **Channel**: `{year}-year-status-updates` (e.g., "1st-year-status-updates")
-
-### Bot Permissions
-Grant these permissions to your bot role:
-- **Text Permissions**: Send Messages, Read Message History, Embed Links
-- **Channel Management**: Manage Channels (for auto-provisioning)
-- **Role Management**: Manage Roles (for probation system)
-- **Advanced**: Use Slash Commands, Manage Messages
-
-## Usage Guide
-
-### For Team Members
-
-#### Daily Status Submission
-1. Navigate to the support channel
-2. Click "Status Updates" button
-3. Select Work From Home option if applicable
-4. Complete the modal form:
-   - **Date**: DD-MM-YYYY format (allows backdated submissions)
-   - **Hours Worked**: Minimum 4 hours (2 for WFH), 6 hours weekends (3 for WFH)
-   - **Work Description**: Detailed description of daily activities
-   - **Blockers**: Any impediments or challenges faced
-5. Submit before 11:59 PM to avoid warnings
-
-#### Leave Request Process
-1. Click "Leave Tracking" button in support channel
-2. Select appropriate leave type
-3. Complete the relevant form:
-   - **Casual Leave**: Date range and optional reason
-   - **Medical Leave**: Date range, detailed reason, and mode (Day-off/WFH)
-   - **Special Leave**: Date range and comprehensive justification
-4. Await approval (except casual leave which is auto-approved)
-
-### For Administrators
-
-#### Command Reference
-- **`/weekly_report [user] [week_offset]`**: Generate productivity reports
-- **`/export_csv [from_date] [to_date]`**: Export team data with date filtering
-- **`/refresh_current_team`**: Manually refresh role cache
-- **`/config_info`**: Display current bot configuration
-- **`/setup_support_channel`**: Initialize main interface (owner only)
-
-#### Leave Approval Process
-1. Monitor leave request channel for new requests
-2. Review request details and member hierarchy
-3. Use approval buttons:
-   - **Approve**: Grant leave request
-   - **Deny**: Reject with automatic notification
-   - **Thread**: Create discussion thread for clarification
-
-## Technical Implementation
-
-### Role-based Hierarchy System
-The bot implements a sophisticated hierarchy for leave approvals:
-- **Level 1** (1st years): Can be approved by levels 2, 3, 4, 5
-- **Level 2** (2nd years): Can be approved by levels 3, 4, 5
-- **Level 3** (3rd years): Can be approved by levels 4, 5
-- **Level 4** (4th years): Can be approved by level 5 only
-- **Level 5** (Core Members): Auto-approved, no manual approval needed
-
-### Validation Framework
-Comprehensive input validation includes:
-- **Date Formats**: Strict DD-MM-YYYY validation with logical checks
-- **Hour Requirements**: Dynamic minimums based on day type and work mode
-- **Text Content**: Length limits and meaningful content verification
-- **Role Prerequisites**: Automatic verification of required team/year roles
-
-### Performance Optimization
-- **Intelligent Caching**: 30-minute cache duration with real-time updates
-- **Atomic File Operations**: Temporary file writes to prevent corruption
-- **Batch Processing**: Efficient bulk operations for background tasks
-- **Memory Management**: Careful resource usage for long-running processes
-
-### Background Task Automation
-- **Daily Warning Check**: 12:00 AM IST automated compliance verification
-- **Reminder System**: 11:59 PM IST proactive submission reminders
-- **Cache Maintenance**: Automatic cleanup and refresh operations
-- **Data Archival**: Periodic cleanup of old requests and temporary files
-
-## Configuration Management
-
-### Environment Variables
-All configuration is externalized through environment variables:
-- **Channel IDs**: Easy reconfiguration without code changes
-- **Role Names**: Customizable role name mapping
-- **Performance Tuning**: Adjustable cache duration and timeouts
-- **Feature Flags**: Optional feature enable/disable capability
-
-### Multi-environment Support
-- **Development**: Separate channel IDs for testing
-- **Production**: Live server configuration
-- **Staging**: Intermediate testing environment
-- **Local**: Developer-specific settings
-
-## Data Management
-
-### Storage Architecture
-- **JSON Files**: Lightweight, human-readable data storage
-- **Atomic Writes**: Corruption prevention through temporary files
-- **Backup Integration**: Automatic backup creation during critical operations
-- **Schema Validation**: Data integrity checks and migration support
-
-### Data Export Capabilities
-- **CSV Generation**: Structured export with customizable date ranges
-- **Filtering Options**: User-specific, team-specific, or date-range filtering
-- **Administrative Reports**: Comprehensive productivity and compliance reports
-- **Historical Analysis**: Long-term trend analysis and pattern recognition
-
-### Privacy and Retention
-- **Data Minimization**: Only necessary information collected
-- **Retention Policies**: Automatic cleanup of old temporary data
-- **Access Control**: Role-based access to sensitive information
-- **Audit Trails**: Complete logging of administrative actions
-
-## Monitoring & Reporting
-
-### Real-time Monitoring
-- **Console Logging**: Detailed operation logs for troubleshooting
-- **Performance Metrics**: Cache hit rates and operation timing
-- **Error Tracking**: Comprehensive exception handling and logging
-- **Health Checks**: Automatic validation of critical configurations
-
-### Reporting Capabilities
-- **Weekly Productivity**: Individual and team performance summaries
-- **Compliance Reports**: Warning trends and probation statistics
-- **Leave Utilization**: Usage patterns and capacity planning
-- **Activity Exports**: Historical data for external analysis
-
-## Security & Compliance
-
-### Access Control
-- **Role-based Filtering**: Comprehensive permission system
-- **Hierarchical Approvals**: Multi-level approval workflows
-- **Self-service Prevention**: Users cannot approve their own requests
-- **Administrative Oversight**: Complete audit trails for all actions
-
-### Data Protection
-- **Input Sanitization**: Comprehensive validation and sanitization
-- **Injection Prevention**: Protection against malicious input
-- **Secure Storage**: Encrypted environment variable storage
-- **Access Logging**: Complete audit trails for sensitive operations
-
-### Compliance Features
-- **Automatic Enforcement**: Consistent application of business rules
-- **Exception Handling**: Proper handling of edge cases and errors
-- **Documentation**: Comprehensive logging for regulatory compliance
-- **Privacy Controls**: Minimal data collection and appropriate retention
-
-## Troubleshooting
-
-### Common Issues
-
-#### Configuration Problems
-- **Missing Environment Variables**: Verify all required variables in `.env`
-- **Invalid Channel IDs**: Use `/config_info` command to verify configuration
-- **Role Name Mismatches**: Ensure exact role name matches in server
-
-#### Performance Issues
-- **Cache Problems**: Use `/refresh_current_team` to force cache refresh
-- **Slow Responses**: Check console logs for performance bottlenecks
-- **Memory Usage**: Monitor long-running processes for memory leaks
-
-#### Data Integrity
-- **Corrupted JSON**: Bot automatically creates backups and recovers
-- **Missing Submissions**: Check user role assignments and channel routing
-- **Synchronization Issues**: Verify atomic write operations in logs
-
-
-
+- Add automated tests for leave approval, warning rules, and summary report generation.
+- Move from JSON files to a database if multi-process or high-scale usage is expected.
+- Add structured application logging instead of only console output.
+- Add a fallback non-LLM summary generator for cases where provider quota is exhausted.

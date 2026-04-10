@@ -4,8 +4,7 @@ import os
 from typing import Set, List, Optional
 from datetime import datetime, timedelta
 
-CURRENT_TEAM_CACHE_FILE = "data/current_team_cache.json"
-CURRENT_TEAM_ROLE_NAME = "current-team"  
+from ..config import CURRENT_TEAM_CACHE_FILE, CURRENT_TEAM_ROLE_NAME
 
 class CurrentTeamManager:
     """
@@ -138,9 +137,14 @@ class CurrentTeamManager:
     
     def add_member_to_cache(self, guild_id: int, user_id: int):
         """Add a specific member to cache (useful for immediate updates)."""
-        if guild_id in self._cache:
-            self._cache[guild_id]["user_ids"].add(user_id)
-            self.save_cache()
+        if guild_id not in self._cache:
+            self._cache[guild_id] = {
+                "user_ids": set(),
+                "last_updated": datetime.now()
+            }
+        self._cache[guild_id]["user_ids"].add(user_id)
+        self._cache[guild_id]["last_updated"] = datetime.now()
+        self.save_cache()
 
 # Global instance
 current_team_manager = CurrentTeamManager()
