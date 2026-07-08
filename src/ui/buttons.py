@@ -185,11 +185,9 @@ class LeaveApprovalView(discord.ui.View):
 
         # Create tracking message
         mode_text = f"\nMode: {mode}" if mode else ""
-        leave_tracking_message = (
-            f"Leave on ({start_date} to {end_date})\n"
-            f"Leave Type: {leave_type}\n"
-            f"Reason: {reason}{mode_text}\n"
-            f"From {requester.display_name} Approved by: {approver.display_name}"
+        leave_tracking_message = (f"""```Leave on ({start_date} to {end_date})
+Leave Type: {leave_type}
+Reason: {reason}{mode_text}```From {requester.mention} Approved by: {approver.mention}"""
         )
 
         # Update embed
@@ -259,12 +257,10 @@ class LeaveApprovalView(discord.ui.View):
 
         # Create tracking message
         mode_text = f"\nMode: {mode}" if mode else ""
-        leave_tracking_message = (
-            f"Leave on ({start_date} to {end_date})\n"
-            f"Leave Type: {leave_type}\n"
-            f"Reason: {reason}{mode_text}\n"
-            f"From {requester.display_name} Denied by: {approver.display_name}"
-        )
+        leave_tracking_message = (f"""```Leave on ({start_date} to {end_date})
+Leave Type: {leave_type}
+Reason: {reason}{mode_text}```
+From {requester.display_name} Denied by: {approver.display_name}""")
 
         # Update embed
         original_embed = interaction.message.embeds[0] if interaction.message.embeds else discord.Embed()

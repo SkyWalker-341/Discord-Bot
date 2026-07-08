@@ -66,6 +66,10 @@ bot = commands.Bot(command_prefix=COMMAND_PREFIX, intents=intents)
 # Initialize the current team manager
 current_team_manager = CurrentTeamManager()
 
+ADMINISTRATOR_ROLE_NAME = "Administrator"
+CORE_MEMBER_ROLE_NAME = "Core Member"
+SECOND_YEAR_ROLE_NAME = "2nd_years"
+
 
 def owner_only():
     async def predicate(interaction: discord.Interaction) -> bool:
@@ -75,6 +79,46 @@ def owner_only():
         if app_info.team and any(member.id == interaction.user.id for member in app_info.team.members):
             return True
         raise app_commands.CheckFailure("Only the bot owner can use this command.")
+
+    return app_commands.check(predicate)
+
+
+def _member_has_any_role(member: discord.Member, role_names: tuple[str, ...]) -> bool:
+    normalized_role_names = {role_name.casefold() for role_name in role_names}
+    if not normalized_role_names:
+        return False
+    return any(role.name.casefold() in normalized_role_names for role in member.roles)
+
+
+def _member_is_administrator(member: discord.Member) -> bool:
+    return member.guild_permissions.administrator or _member_has_any_role(
+        member,
+        (ADMINISTRATOR_ROLE_NAME,),
+    )
+
+
+def require_command_access(
+    *,
+    allowed_roles: tuple[str, ...] = (),
+    allow_current_team: bool = False,
+    allow_administrator: bool = False,
+    failure_message: str,
+):
+    async def predicate(interaction: discord.Interaction) -> bool:
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            raise app_commands.CheckFailure("This command can only be used inside a server.")
+
+        if allow_administrator and _member_is_administrator(member):
+            return True
+
+        if allow_current_team and current_team_manager.is_current_team_member(member):
+            return True
+
+        if _member_has_any_role(member, allowed_roles):
+            return True
+
+        raise app_commands.CheckFailure(failure_message)
 
     return app_commands.check(predicate)
 
@@ -245,7 +289,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.MissingPermissions):
         message = "You need administrator permissions to use this command."
     elif isinstance(error, app_commands.CheckFailure):
-        message = "You do not have permission to use this command."
+        message = str(error).strip() or "You do not have permission to use this command."
     else:
         print(f"App command error: {error}")
         message = "An unexpected error occurred while processing that command."
@@ -393,8 +437,11 @@ async def setup_support_channel(interaction: discord.Interaction):
 
 @bot.tree.command(name="export_full_report", description="Export complete activity report (CSV only).")
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
+@require_command_access(
+    allowed_roles=(CORE_MEMBER_ROLE_NAME,),
+    allow_administrator=True,
+    failure_message="Access denied. This command is only available to Administrators and Core Members.",
+)
 async def export_full_report_command(
     interaction: discord.Interaction,
     from_date: str = None,
@@ -520,8 +567,10 @@ async def export_full_report_command(
 
 @bot.tree.command(name="weekly_report", description="Get weekly report for current-team members.")
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
+@require_command_access(
+    allow_current_team=True,
+    failure_message=f"Access denied. This command is only available to members with the '{CURRENT_TEAM_ROLE_NAME}' role.",
+)
 @app_commands.describe(
     user="Select a member from the Discord user picker for an individual weekly report.",
     week_offset="Week offset relative to the current week. 0 is this week, 1 is last week.",
@@ -611,8 +660,10 @@ async def weekly_report(
 
 @bot.tree.command(name="summary_report", description="Generate a team summary report file.")
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
+@require_command_access(
+    allowed_roles=(CORE_MEMBER_ROLE_NAME,),
+    failure_message="Access denied. This command is only available to Core Members.",
+)
 @app_commands.describe(
     team="Choose the team to summarize.",
     week_offset="Week offset relative to the current week. 0 is this week, 1 is last week.",
@@ -637,8 +688,11 @@ async def summary_report(
 
 @bot.tree.command(name="refresh_current_team", description="Refresh the current-team member cache.")
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
+@require_command_access(
+    allowed_roles=(CORE_MEMBER_ROLE_NAME,),
+    allow_administrator=True,
+    failure_message="Access denied. This command is only available to Administrators and Core Members.",
+)
 async def refresh_current_team_cache(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
@@ -721,8 +775,11 @@ async def my_stats(interaction: discord.Interaction):
 
 @bot.tree.command(name="warning", description="View warning summaries or issue warnings.")
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
+@require_command_access(
+    allowed_roles=(CORE_MEMBER_ROLE_NAME, SECOND_YEAR_ROLE_NAME),
+    allow_administrator=True,
+    failure_message="Access denied. This command is only available to Administrators, Core Members, and 2nd Years.",
+)
 @app_commands.describe(
     month="Month to view in report mode.",
     year="Year to view in report mode.",
@@ -783,7 +840,12 @@ async def warning(
     target_month = month if month and 1 <= month <= 12 else today.month
     target_year = year if year and year >= 2020 else today.year
 
-    warnings_data = load_warnings(interaction.guild.id)
+    try:
+        warnings_data = load_warnings(interaction.guild.id)
+    except ValueError as exc:
+        await interaction.followup.send(str(exc), ephemeral=True)
+        return
+
     current_team_members = current_team_manager.get_current_team_members(interaction.guild)
 
     # Build a lookup: user_id -> display_name

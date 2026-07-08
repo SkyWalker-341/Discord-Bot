@@ -1,5 +1,6 @@
-import discord
 import datetime
+import json
+import discord
 from discord.utils import escape_markdown, escape_mentions
 from ..core.utils import has_current_team_role
 from .hierarchy import can_act_on_member, get_role_display_name, get_user_level
@@ -118,7 +119,13 @@ def _count_warning_history_for_date(entry: dict, target_date: datetime.date, sou
 
 
 def load_warnings(guild_id: int):
-    data = read_json(_warnings_path(guild_id), {})
+    path = _warnings_path(guild_id)
+    try:
+        data = read_json(path, {})
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Warning data is corrupted for this server ({path} line {exc.lineno}, column {exc.colno})."
+        ) from exc
     
     # Convert old format to new format if needed
     converted_data = {}

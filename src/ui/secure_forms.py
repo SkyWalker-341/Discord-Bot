@@ -262,7 +262,7 @@ async def handle_auto_approval(interaction: discord.Interaction, request_data: d
     guild_id = interaction.guild.id
 
     if "username" not in request_data:
-        request_data["username"] = interaction.user.display_name
+        request_data["username"] = interaction.user.mention
     request_data["approver_id"] = interaction.client.user.id
     request_data["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -274,11 +274,9 @@ async def handle_auto_approval(interaction: discord.Interaction, request_data: d
         safe_mode = sanitize_public_text(request_data.get("mode", ""))
         mode_line = f"\nMode: {safe_mode}" if safe_mode else ""
         auto_approved_message = (
-            f"Leave on ({date_range_str})\n"
-            f"Leave Type: {request_data.get('type', 'unknown').capitalize()}\n"
-            f"Reason: {safe_reason}{mode_line}\n"
-            f"From {interaction.user.display_name} auto approved by {interaction.client.user.display_name}."
-        )
+            f""" ```Leave on ({date_range_str})
+Leave Type: {request_data.get('type', 'unknown').capitalize()}
+Reason: {safe_reason}{mode_line}```From {interaction.user.mention} auto approved by {interaction.client.user.mention}.""" )
         await leave_tracking_channel.send(
             auto_approved_message,
             allowed_mentions=discord.AllowedMentions.none(),
@@ -524,15 +522,13 @@ class StatusForm(discord.ui.Modal, title="Daily Status Update"):
         safe_work_desc = sanitize_code_block_text(work_desc)
         safe_blockers = sanitize_code_block_text(blockers_text)
         late_indicator = " (Late Submission)" if is_late else ""
-        status_message = (
-            f"```Namah Shivaya ({submission_date.strftime('%d-%m-%Y')}){late_indicator}\n"
-            f"{safe_work_desc}\n\n"
-            f"Work from hostel: {'YES' if is_wfh else 'NO'}\n"
-            f"Blockers: {safe_blockers}\n"
-            f"Time Spent: {hours_worked} hrs\n"
-            f"Weekly Progress: {total_weekly:.1f}/32 hours```\n"
-            f"By {interaction.user.display_name}"
-        )
+        status_message = ( f"""
+```Namah Shivaya ({submission_date.strftime('%d-%m-%Y')}){late_indicator}
+{safe_work_desc}
+Work from hostel: {'YES' if is_wfh else 'NO'}
+Blockers: {safe_blockers}
+Time Spent: {hours_worked} hrs```By {interaction.user.mention}
+""" )
 
         try:
             await target_channel.send(
@@ -549,7 +545,7 @@ class StatusForm(discord.ui.Modal, title="Daily Status Update"):
         record_status_update(
             guild_id=guild_id,
             user_id=interaction.user.id,
-            username=interaction.user.display_name,
+            username=interaction.user.mention,
             date=submission_date,
             hours=hours_worked,
             description=work_desc,
@@ -641,12 +637,9 @@ class CasualLeaveModal(discord.ui.Modal, title="Casual Leave Request"):
 
         leave_tracking_channel = interaction.guild.get_channel(LEAVE_TRACKING_CHANNEL_ID)
         if leave_tracking_channel:
-            leave_message = (
-                f"Leave on ({self.date_range.value})\n"
-                f"Leave Type: Casual Leave\n"
-                f"Reason: {sanitize_public_text(reason)}\n"
-                f"From {interaction.user.display_name} approved by {interaction.client.user.display_name}"
-            )
+            leave_message = (f"""```Leave on ({self.date_range.value})
+Leave Type: Casual Leave
+Reason: {sanitize_public_text(reason)}```From {interaction.user.mention} approved by {interaction.client.user.mention}""")
             await leave_tracking_channel.send(
                 leave_message,
                 allowed_mentions=discord.AllowedMentions.none(),
@@ -697,6 +690,9 @@ class MedicalLeaveModal(discord.ui.Modal, title="Medical Leave Request"):
             if not reason:
                 await interaction.followup.send("Medical leave reason is required.", ephemeral=True)
                 return
+            if len(reason) < 10:
+                await interaction.followup.send("Reason must be at least 10 characters long.", ephemeral=True)
+                return
             if len(reason) > 500:
                 await interaction.followup.send("Reason cannot exceed 500 characters.", ephemeral=True)
                 return
@@ -722,7 +718,7 @@ class MedicalLeaveModal(discord.ui.Modal, title="Medical Leave Request"):
             "request_id": request_id,
             "type": "medical",
             "member_id": interaction.user.id,
-            "username": interaction.user.display_name,
+            "username": interaction.user.mention,
             "dates": {"start": start_date_str, "end": end_date_str},
             "reason": reason,
             "mode": mode,
@@ -798,6 +794,9 @@ class SpecialLeaveModal(discord.ui.Modal, title="Special Leave Request"):
             if not reason:
                 await interaction.followup.send("Special leave reason is required.", ephemeral=True)
                 return
+            if len(reason) < 10:
+                await interaction.followup.send("Reason must be at least 10 characters long.", ephemeral=True)
+                return
             if len(reason) > 500:
                 await interaction.followup.send("Reason cannot exceed 500 characters.", ephemeral=True)
                 return
@@ -818,7 +817,7 @@ class SpecialLeaveModal(discord.ui.Modal, title="Special Leave Request"):
             "request_id": request_id,
             "type": "special",
             "member_id": interaction.user.id,
-            "username": interaction.user.display_name,
+            "username": interaction.user.mention,
             "dates": {"start": start_date_str, "end": end_date_str},
             "reason": reason,
             "status": "pending",
@@ -890,6 +889,9 @@ class WorkFromHostelModal(discord.ui.Modal, title="Hostel Work Leave Request"):
             if not reason:
                 await interaction.followup.send("Hostel work leave reason is required.", ephemeral=True)
                 return
+            if len(reason) < 2:
+                await interaction.followup.send("Reason must be at least 10 characters long.", ephemeral=True)
+                return
             if len(reason) > 500:
                 await interaction.followup.send("Reason cannot exceed 500 characters.", ephemeral=True)
                 return
@@ -910,7 +912,7 @@ class WorkFromHostelModal(discord.ui.Modal, title="Hostel Work Leave Request"):
             "request_id": request_id,
             "type": "hostel_work",
             "member_id": interaction.user.id,
-            "username": interaction.user.display_name,
+            "username": interaction.user.mention,
             "dates": {"start": start_date_str, "end": end_date_str},
             "reason": reason,
             "status": "pending",
@@ -927,7 +929,7 @@ class WorkFromHostelModal(discord.ui.Modal, title="Hostel Work Leave Request"):
             title="New Hostel Work Leave Request",
             color=discord.Color.orange(),
             description=(
-                f"Submitted by: {interaction.user.display_name}\n"
+                f"Submitted by: {interaction.user.mention}\n"
                 f"Reason: {sanitize_public_text(reason)}"
             ),
         )
